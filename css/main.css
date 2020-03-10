@@ -2,3 +2,30 @@
     font-style: italic;
     opacity: 50%;
 }
+
+.navbar-brand {
+    font-size: 1.5em;
+}
+
+.nav-link{
+    text-transform: initial !important;
+    font-size: 1.15em !important;
+}
+
+.logo {
+    background-image: url("/img/icons8-java-black.svg");
+}
+
+@media only screen and (min-width: 992px) {
+    .logo {
+        background-image: url("/img/icons8-java-white.svg");
+    }
+}
+
+@media only screen and (min-width: 768px) {
+    header.masthead .page-heading,
+    header.masthead .post-heading,
+    header.masthead .site-heading {
+        padding: 100px 0 50px 0;
+    }
+}
