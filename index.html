@@ -1,11 +1,12 @@
 ---
-layout: page
+layout: default
 ---
+<div class="row">
 
-<div class="posts">
+
     {% for post in site.posts %}
 
-    <div class="post-preview">
+    <div class="post-preview col-lg-6 col-md-12 mx-auto">
         <a href="{{ post.url }}">
             <h2 class="post-title">
                 {{ post.title }}
@@ -14,14 +15,14 @@ layout: page
                 {{ post.excerpt }}
             </h3>
         </a>
-<!--        <p class="post-meta">Posted by-->
-<!--            <a href="#">Start Bootstrap</a>-->
-<!--            on September 24, 2019</p>-->
-    </div>
-    <hr>
-    {% endfor %}
-</div>
 
+        <hr/>
+    </div>
+    {% endfor %}
+    <div class="post-preview col-lg-6 col-md-12 mx-auto">
+    </div>
+
+</div>
 
 
 
