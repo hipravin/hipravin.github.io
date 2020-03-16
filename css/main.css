@@ -41,7 +41,16 @@
 .post-subtitle {
     font-size: 19px !important;
 }
+
 .code-snapshot {
     margin: 10px 10px 10px 10px;
     float:none;
+}
+
+.comment-th {
+    width: 60%;
+}
+
+.alg-th {
+    width: 20%;
 }
