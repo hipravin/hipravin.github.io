@@ -47,10 +47,34 @@
     float:none;
 }
 
+.code-snapshot85 {
+    width: 85%;
+    height: 85%;
+}
+
+.code-snapshot75 {
+    width: 75%;
+    height: 75%;
+}
+
+.code-snapshot50 {
+    width: 50%;
+    height: 50%;
+}
+
 .comment-th {
     width: 60%;
 }
 
 .alg-th {
     width: 20%;
+}
+
+.halfheight {
+    height: 300px;
+    overflow: auto;
+}
+
+.ul-nob {
+    list-style-type: none;
 }
