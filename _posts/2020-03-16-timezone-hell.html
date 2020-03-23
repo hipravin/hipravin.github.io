@@ -1,0 +1,908 @@
+---
+layout: post
+title: Время и часовые пояса в Java
+excerpt: TimeZone hell при работе с базами данных и немного с фронтендом. Date, java.time, JdbcTemplate, Spring Data JPA
+---
+<p><a href="https://github.com/hipravin/samples-timezones">Код примера</a>.</p>
+
+<p>Различные операции с датой и временем, а заодно и связанные проблемы, возникают, как правило, уже в коммерческой
+    разработке.
+    В процессе обучения, изучения алгоритмов, языка, фреймворков и технологий, этой теме не уделяют особого внимания.
+    С одной стороны, время - это ведь тип данных, который не намного сложнее целого числа, но явно проще строк,
+    массивов, стримов и так далее.
+    Все карты путают часовые пояса (time zones). На каждом проекте раз за разом в базе данных или на страницах сайтов
+    отовсюду
+    вылезают смещённые значения.
+    То на час вперёд, то на два назад. В иной раз вместо 00:00 дня сегодняшнего получаем 23:00 дня вчерашнего.
+</p>
+
+<p>
+    Проблемам этим не видно конца и края. Программисты на Java отчаянно расставляют по коду конструкции наподобие
+    TimeZone.setDefault(TimeZone.getTimeZone("UTC")), и периодически это помогает, но не всегда и хуже того, не
+    навсегда.
+    Разработчики со временем привыкают к неотвратимости проблем с часовыми поясами и стараются избегать их решения без
+    необходимости.
+    Вспоминаю задачу "Время в заголовке сайта сдвинуто на три часа", которая годами откладывалась как не приоритетная,
+    пока проект не закрылся.
+    Таким образом сформировалось общепринятое отношение к этой теме: "Timezones are hell".
+</p>
+
+<p>
+    Если в базе данных даты уже "поехали", то исправить всё практически невозможно, только построить заново.
+    Но при правильном и аккуратном подходе с самого начала проблем можно избежать.
+    Принцип достаточно простой - нужно избавиться от всех неявных часовых поясов и всегда указывать правильный в особых
+    местах.
+    Эти места - точки перехода даты из состояния "С таймзоной" и состояния "БЕЗ таймзоны". Думаю, звучит уже непонятно и
+    усложняется ещё тем,
+    что в java 8 появился новый подход к работе с датой и временем, и к классу Date добавилось ещё примерно семь - десять
+    новых классов.
+    Постараюсь рассказать и разложить всё по полочкам.
+</p>
+
+<p>
+    Начну с небольшого обзора работы со временем в Java. Сначала до java 8.
+    Дата и время с точностью до миллисекунд инкапасулированы классом java.util.Date.
+    Разумно предположить, что это некий класс, к котором есть поля year, month, day, hour и так далее.
+    Но нет, в Java, javascript и во многих других языках, Date - это число, long, 8 байт. Число миллисекунд с
+    фиксированного момента времени:
+    January 1, 1970, 00:00:00 GMT (в англоязычной терминологии, "the epoch").
+    Думаю, такая концепция была очень удобна в 1970 году, и небольшой целочисленной переменной хватало с лихвой,
+    ведь тогда пямать была намного ценнее абстрактной правильности подхода (если уж так проектировать, то почему не дату
+    0000-01-01 взять за начало времён).
+</p>
+
+<p>
+    Операций с датой не так много - создать новый объект с помощью конструктора, сравнить на before/after, как-то
+    преобразовать в строку.
+    Все операции на получение и установку компонентов времени, таких как год, месяц, час и так далее, помечены как
+    "deprecated".
+    То есть использовать их нежелаетльно, а в будущих версиях Java они могут быть удалены совсем.
+    Но важнее то, что из-за часовых поясов в общем случае они не могут работать корректно. Использовать их не нужно.
+</p>
+
+<p>
+    Несколько примеров:
+    {% highlight java %}
+    Date epoch = new Date(0);
+    Date y1999 = new Date(1000L * 60 * 60 * 24 * 365 * 29);
+    System.out.println(epoch.getTime() + ", " + epoch);//0, Thu Jan 01 03:00:00 MSK 1970
+
+    //1999 не получился, потеряли високосные года
+    System.out.println(y1999.getTime() + ", " + y1999);//914544000000, Fri Dec 25 03:00:00 MSK 1998
+
+    Date now = new Date();//equivalent to new Date(System.currentTimeMillis())
+    System.out.println(now.getTime() + ", " + now);//1584695414171, Fri Mar 20 12:10:14 MSK 2020
+
+    System.out.println(now.after(epoch)); //true
+    {% endhighlight %}
+</p>
+
+<p>
+    Внимательный читатель обратил внимание, что результат преобразования к строке (метод Date.toString()),
+    вывод которого указан в комментариях, содержит год, месяц, день и даже часовой пояс (MSK), что не сходится с тем,
+    что Date - просто целое число.
+    Дело в том, что внутри реализации toString() неявно используется текущий часовой пояс (TimeZone.getDefaultRef(),
+    если покопаться в исходниках), что позволяет определить
+    компоненты времени в этом поясе и отобразить в читаемом виде. Математически правильнее было бы всегда печатать число
+    миллисекунд, но это абсолютно нечитаемо и неудобно.
+    Вообще, преобразование даты в строку методом toString полезно только для отладочной печати. Для бизнес сценариев
+    используются "форматтеры", например, SimpleDateFormat.
+    Пример ниже.
+</p>
+<p>
+    {% highlight java %}
+    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss Z");
+    //если не указать таймзону, будет использоваться по умолчанию, как определит JVM
+    //но вообще без таймзоны преобразовать к строке невозможно, результат неопределён
+    sdf.setTimeZone(TimeZone.getTimeZone("GMT"));
+
+    System.out.println(sdf.format(epoch));//1970-01-01T00:00:00 +0000
+    System.out.println(sdf.format(now)); //2020-03-20T09:01:21 +0000
+
+    Date parsed = sdf.parse("2022-03-20T09:01:21 +0000");
+    System.out.println(parsed.getTime() + ", " + parsed);//1647766881000, Sun Mar 20 12:01:21 MSK 2022
+    {% endhighlight %}
+</p>
+
+<p>
+    Итак, Date - это число, его можно преобразовать в строку, указав таймзону. Такое преобразование обычно приводит к
+    потере данных,
+    в прошлом примере были утрачены миллисекунды. Можно использовать формат записи с той же точностью, не приводящий к
+    потере данных,
+    например, "2020-03-20T13:14:47.746Z", но на практике это избыточно: точность нужна обычно до секунд или даже до
+    минут.
+    Вообще, до тех пор пока дату не нужно куда-то передать или показать ползователю, сложностей с ней особо не
+    возникает.
+    А вот если нужно сохранить или получить значение из базы данных, либо передать через Rest сервис и показать на
+    экране, тогда начинаются
+    трудности.
+</p>
+
+<p>Для операций с базой данных существуют два вспомогательных типа: java.sql.Date и java.sql.Timestamp.
+   Их назначение подобно маркер интерфейсу - чтобы драйвер мог определить, к какому типу относится целевое поле в БД: DATE или TIMESTAMP,
+    если это не указано явно. Никаких хитростей в этом плане нет, всегда можно преобразовать один тип в другой без потери данных.
+    Кроме того, мы как раз будем пытаться всё указывать явно, чтобы драйвер и библиотеки не осуществляли никаких скрытых преобразований.
+</p>
+
+<p>
+    В качестве примера разберу небольшое приложение по управлению запланированными встречами.
+    <a href="https://github.com/hipravin/samples-timezones"> Код примера можно найти на github</a>.
+    Стек технологий: Java 11, Spring (Boot, Mvc, JdbcTemplate, Data Jpa, Test), Junit 5, H2 database (Oracle Syntax).
+    Все классы в одном пакете, запускается локально классом TimezonesApplication, дополнтельных настроек не требуется.
+    Порт по умолчанию 8085 (приложение: http://localhost:8085/, h2 console: http://localhost:8085/h2-console).
+    Выглядит так:
+</p>
+
+<p>
+    <img class="code-snapshot code-snapshot85" src="/img/posts/timezones/meetings-home.PNG"
+         alt="картинки нет, но вы держитесь"/>
+</p>
+
+<p>
+    Кроме митингов, добавленных через браузер, на старте добавляется ещё три: один в скрипте инициализации БД, используя sysdate,
+    и два из кода используя реализацию через JdbcTemplate и JPA, используя new Date() и OffsetDateTime.now().
+    Это сделано для того, чтобы убедиться, что все варианты реализации работают корректно и не смещают время ошибочно.
+</p>
+
+<p>
+    Данные о каждом митинге хранятся в классе MeetingDto, имеющим два поля для хранения времени. Значения в них
+    совпадают,
+    но одно реализовано с помощью Date, а другое - с помощью OffsetDateTime из java.time.
+    {% highlight java %}
+    private Date meetingTimeDate;
+    private OffsetDateTime meetingTimeOffsetDateTime;
+    {% endhighlight %}
+
+    Это сделано для иллюстрации работы в каждом из случаев,
+    потому что не на всех проектах можно с сегодняшнего дня перестать использовать Date и полностью перейти на
+    java.time.
+    На странице выводятся оба значения, чтобы показать, что они совпадают и ни одно не сместилось в процессе сохранения
+    или передачи.
+    Кроме того, время выподится для текущего часового пояса, определённого браузером, и для Нью-Йорка. Полезно если
+    работаете в распределённой команде,
+    чтобы в уме постоянно не прибавлять или вычитать часы, а заодно не помнить о переходе на летнее и зимнее время.
+    Сначала расскажу все подробности работы с Date, а потом - с OffsetDateTime, после обзора пакета java.time.
+</p>
+
+<p>
+    Я не буду описывать все компоненты приложения, лишь ключевые моменты, связанные с передачей и сохранением времени.
+    Общая схема такова. Путь от браузера до базы данных:
+</p>
+
+
+<ul class="ul-nob">
+    <li>
+        <strong>1. Html:</strong> В поле input с типом type="datetime-local" с помощью встроенного селектора вводится дата и время
+    </li>
+    <li>
+        <strong>2. Javascript:</strong> После нажатия кнопки 'добавить' значение передаётся в конструктор javascript типа Date:
+        {% highlight javascript %}
+    new Date($("#mtgTime").val()).toISOString()        {% endhighlight %}
+    </li>
+    <li>
+        <strong>3. Javascript:</strong> После этого Date преобразовывается к стандартному формату toISOString (ISO 8601). Пример результата: 2020-03-28T10:00:00.000Z.
+    </li>
+    <li>
+        <strong>4. Javascript:</strong> Это значение оборачивается в объект, который методом JSON.stringify становится телом (body, request payload) POST запроса к REST сервису: /api/meeting/add.
+    </li>
+    <li>
+        <strong>5. Java:</strong> MeetingRestService: Spring преобразовывает тело запроса в класс MeetingDto, за это отвечает код:
+        {% highlight java %}
+     @PostMapping("/add")
+     MeetingDto addMeeting(@RequestBody MeetingDto meeting)    {% endhighlight %}
+    </li>
+    <li>
+        <strong>6. Java:</strong> Библиотека jackson за счет правильного формата даты, совпадающего с тем, который использует javascript (ISO 8601), преобразовывает строку к классу Date.
+        К слову, для OffsetDateTime всё работает так же.
+        {% highlight java %}
+    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSSXXX")
+    private Date meetingTimeDate;
+    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSSXXX")
+    private OffsetDateTime meetingTimeOffsetDateTime;       {% endhighlight %}
+    </li>
+    <li>
+        <strong>7a. Java:</strong> сохранение в базу данных при помощи JdbcTemplate. Ключевым является передача объекта типа Calendar,
+        содержащего информаццию о таймзоне, в качестве дополнительного параметра при передаче даты в PreparedStatement.
+        Этот параметр необязателен, и тогда будет неявно использована таймзона по умолчанию, что приведёт к ошибкам.
+
+        {% highlight java %}
+    public static final Calendar CALENDAR = Calendar.getInstance(TimeZone.getTimeZone("America/New_York"));
+
+    public static final String INSERT_MTG_QUERY =
+         "INSERT INTO MEETINGS (ID, DESCRIPTION, DATE_DATE, DATE_OFFSETDT) " +
+         "VALUES (?, ?, ?, ?);";
+
+    namedParameterJdbcTemplate.getJdbcTemplate().update(INSERT_MTG_QUERY, ps -> {
+        ps.setLong(1, meetingDto.getId());
+        ps.setString(2, meetingDto.getDescription());
+        ps.setTimestamp(3, new Timestamp(meetingDto.getMeetingTimeDate().getTime()), CALENDAR);
+        ps.setTimestamp(4, Timestamp.from(meetingDto.getMeetingTimeOffsetDateTime().toInstant()), CALENDAR);
+    });         {% endhighlight %}
+    </li>
+    <li>
+        <strong>7б. Java:</strong> сохранение в базу данных, но при помощи JPA. Используется Spring Data Jpa, но можно было бы напрямую использовать EntityManager,
+        изменения минимальные. Для @Entity используется отдельный класс, чтобы не смешивать аннотации Jackson и JPA и иметь больше гибкости.
+        В этом случае мы не указываем таймзону при каждой передаче параметров, но указываем специальное свойство в конфигурации: hibernate.jdbc.time_zone.
+
+        {% highlight java %}
+     //MeetingEnity:
+     @Column(name = "DATE_DATE")
+     @Temporal(TemporalType.TIMESTAMP)
+     private Date meetingTimeDate;
+
+     @Column(name = "DATE_OFFSETDT")
+     private OffsetDateTime meetingTimeOdt;
+
+     //MeetingRepository:
+     public interface MeetingRepository extends JpaRepository<MeetingEntity, Long>
+
+     //MeetingDaoSpringDataJpa:
+     MeetingEntity me = MeetingEntity.fromDto(meetingDto);
+     meetingRepository.save(me);
+     meetingDto.setId(me.getId());  {% endhighlight %}
+    </li>
+
+</ul>
+
+<p>
+    Последний шаг, как и работа с базой данных в целом, требует пояснения.
+    База данных H2 инициализируется при старте приложения и хранит данные в памяти.
+    Такие базы данных как правило называют embedded database. При этом такую базу данных можно конфигурировать
+    для имитации синтаксиса и поведения полноразмерных баз данных: Oracle, MySQL, PostgreSQL, MS SQL Server и т.д.
+    Некоторые сильно специфичные функции работать не будут. В этом примере я использую синтаксис Oracle.
+</p>
+
+<p>
+    При проектировании таблицы MEETINGS нужно выбрать тип данных, в котором будет храниться время митинга,
+    то есть дата и время с точностью до минут. В Oracle имеем как минимум следующие варианты:
+</p>
+
+<table class="table">
+    <thead>
+       <tr>
+           <th>Тип данных</th>
+           <th>Временная зона</th>
+           <th>Доли секунд</th>
+       </tr>
+    </thead>
+    <tbody>
+           <tr>
+               <td>DATE</td>
+               <td>Нет</td>
+               <td>Нет</td>
+           </tr>
+           <tr>
+               <td>TIMESTAMP</td>
+               <td>Нет</td>
+               <td>Да</td>
+           </tr>
+           <tr>
+               <td>TIMESTAMP WITH TIME ZONE</td>
+               <td>Явный (Explicit)</td>
+               <td>Да</td>
+           </tr>
+           <tr>
+               <td>TIMESTAMP WITH LOCAL TIME ZONE</td>
+               <td>Относительный (Relative)</td>
+               <td>Да</td>
+           </tr>
+    </tbody>
+</table>
+
+<p>Последние два типа я не рекомендую использовать, кроме случая если Вы эксперт в Oracle, таймзонах и точно знаете, зачем вам конкретный тип.
+    В коммерческих проектах ни разу их не встречал, при использовании данных типов возможностей для ошибок станет сильно больше.
+    Кроме того, эти типы данных поддерживаются не всеми СУБД. В MySQL, например, таких нет. На мой взгляд, лучший выбор - всегда использовать тип TIMESTAMP.
+    В любой СУБД так или иначе будет присутствовать этот тип данных, и вести себя тоже будет примерно одинаково.
+</p>
+
+<p>
+    Тип данных DATE выглядит подходящим, но тоже может привести к путанице, такой, что провод от наушников в кармане позавидует.
+    В Oracle тип DATE хранит время с точностью до секунд. Но при этом настройки по умолчанию популярного клиента Oracle Sql Developer
+    показывают только месяц и день, создавая у пользователей неверное впечатление. Ни один человек в мире в такой ситуации не догадается сам,
+    что время там на самом деле есть, нужно только перенастроить клиент. Но это не конец истории. В PraparedStatement есть два метода для передачи даты:
+    setDate и setTimestamp. Если использовать setDate, то уже сам драйвер (по крайней мере, H2) обнуляет время и сохраняет только год-месяц-число.
+    И нужно для типа дынных DATE использовать setTimestamp!
+    DATE на практике используется, потому что при проектировании базы данных такой путаницы никто не ожидает, но я в этом примере всё же выбрал TIMESTAMP.
+    В примере, к слову, в файле schema.sql можно поменять TIMESTAMP на DATE и ничего не сломается.
+</p>
+
+<p>
+    Структура БД хранится в файле schema.sql и инициализируется на старте приложения.
+    {% highlight java %}
+    CREATE TABLE MEETINGS (
+       ID NUMBER(19,0) NOT NULL PRIMARY KEY,
+       DESCRIPTION VARCHAR2(500) NOT NULL,
+       DATE_DATE TIMESTAMP NULL,
+       DATE_OFFSETDT TIMESTAMP NULL);    {% endhighlight %}
+</p>
+
+<p>
+    Мы выбрали тип TIMESTAMP, но что же он представляет из себя изнутри?
+    Для себя я упростил модель и рассматриваю представление даты как одно из двух: число или строка.
+    Даже если данные хранятся в специальном объекте с полями год, месяц, число и т.д., но там нет информации о смещении/таймзоне/часовом поясе,
+    то по сути операций это - строка наподобие "1999-01-02 10:00.123". Мы не можем сказать, что это за момент времени, не зная таймзоны.
+    TIMESTAMP именно так и работает. У СУБД в конфигурации прописан часовой пояс того сервера, на котором она запущена.
+    Пользователь, который подключится клиентом (Squirrel, Oracle SQL Developer) и будет простматривать информацию посредством SQL запросов,
+    увидит дату и время как будто в часовом поясе базы данных. Можно использовать запрос "select sysdate from dual", чтобы узнать текущее время и понять, как настроена база данных.
+    Но в java у нас время в виде числа, а в базе - в виде строки - следовательно при чтении и записи будет происходить преобразование с использованием информации о таймзоне.
+    Нужно сделать так, чтобы в каждом таком преобразовании таймзона была явно указана, а не использовалась бы та, что установлена по умолчанию в JVM.
+</p>
+
+<p>
+    Вернёмся к коду, который отвечает за само сохранение в базу данных.
+    Вне зависимости от реализации можно выделить две подзадачи: первая - написать параметризованный запрос, вторая - передать все параметры.
+    Параметризованный запрос может содержать знаки вопроса (?) в случае PreparedStatement, JdbcTemplate, либо именованные параметры
+    в случае NamedParameterJdbcTemplate или javax.persistence.Query. В примере используется JdbcTemplate и сигнатура метода с параметром типа Calendar,
+    указывающим на таймзону сервера баз данных. Вообще моделируется ситуация, в которой база данных находится в Нью-Йорке, а сервер приложения - в Москве.
+</p>
+
+<p>
+    Релизация ниже выглядит чуть короче и лаконичнее, причём у метода addValue нет сигнатуры, принимающей Calendar или TimeZone.
+    Этот факт создаёт ошибочное впечатление, что всё правильно, ведь раз нельзя указать таймзону, значит она и не требуется.
+    Но это не так, код ниже приводит к ошибочному смещению времени.
+
+    {% highlight java %}
+    String insertQuery = "INSERT INTO MEETINGS (ID, DESCRIPTION, DATE_DATE, DATE_OFFSETDT) " +
+    " VALUES (:id, :description, :date, :date_odt)";
+
+    namedParameterJdbcTemplate.update(insertQuery, new MapSqlParameterSource()
+       .addValue("id", meetingDto.getId())
+       .addValue("description", meetingDto.getDescription())
+       .addValue("date", meetingDto.getMeetingTimeDate(), Types.TIMESTAMP)
+       .addValue("date_odt", meetingDto.getMeetingTimeOffsetDateTime(), Types.TIMESTAMP));  {% endhighlight %}
+</p>
+
+<p>
+    <img class="code-snapshot code-snapshot85" src="/img/posts/timezones/meeting-home-shifted.PNG"
+         alt="картинки нет, но вы держитесь"/>
+</p>
+
+<p>
+    В случае, если доступ к базе данных осуществляется с помощью JPA/Hibernate, то достаточно в конфигурации указать свойство hibernate.jdbc.time_zone=America/New_York
+    или в YAML:
+{% highlight java %}
+    spring:
+      jpa:
+        properties:
+         hibernate:
+           jdbc:
+             time_zone: America/New_York     {% endhighlight %}
+
+    Радует, что технологиии развиваются и код становится проще.
+    Ранее в Hibernate приходилось реализовывать специальный тип, например, UtcTimestampType extends TimestampType,
+    в реализации которого Calendar явно передавался параметром в PreparedStatement.
+    При использовании Query также следовало избегать передачи Date и использовать Calendar.
+    Вы наверняка встретите подобное в старом коде, но разбирать подробно сейчас я не буду.
+    Сейчас, согласно данному примеру и моим тестам, свойства hibernate.jdbc.time_zone достаточно.
+</p>
+
+<p>Следует отметить, что когда ведётся локальная разработка и браузер, JVM, СУБД, операционная система и другие компоненты
+   настроены на единый часовой пояс, ошибки не проявляются. И это только усугубляет ситуацию. Локалько тесты проходят,
+    а на Unix сервере, на котором запущен Jenkins - падают. В тестовой среде всё работает, а в продакшене с большим количеством серверов в разных датацентрах -
+    проявляются ошибки. В коде примера я использую небольшой трюк, устанавливая таймзону по умолчанию в одно значение для инициализации H2,
+    а после изменяю на другое - для операций чтения и сохранения.
+    Такая конфигурация эмулирует базу данных на удалённом сервере.
+</p>
+
+<p>
+    Мы рассмотрели путь от браузера до базы данных, теперь рассмотрим обратный путь. Нужно найти в базе все митинги не старше одного часа и отобразить их
+    в браузере по местному времени и по Нью-Йорку.
+</p>
+
+<ul class="ul-nob">
+    <li>
+        <strong>1a. Java:</strong> JdbcTemplate. Calendar передаётся в трёх местах. Принцип тот же: setTimestamp и getTimestamp должны иметь этот параметр в явном виде.
+
+    {% highlight java %}
+    public static final String FIND_ACTUAL_QUERY =
+        "SELECT * FROM MEETINGS WHERE DATE_OFFSETDT > ?";
+
+    return namedParameterJdbcTemplate.getJdbcTemplate().query(FIND_ACTUAL_QUERY,
+        ps -> ps.setTimestamp(1, Timestamp.from(Instant.now().minusSeconds(60 * 60)), CALENDAR),
+        (rs, i) -> new MeetingDto(
+            rs.getLong("ID"),
+            rs.getString("DESCRIPTION"),
+            rs.getTimestamp("DATE_DATE", CALENDAR),
+            //here zone id can't lead to timezone issues, because instant is same
+            OffsetDateTime.ofInstant(rs.getTimestamp("DATE_OFFSETDT", CALENDAR).toInstant(), ZoneId.systemDefault())));  {% endhighlight %}
+    </li>
+    <li>
+        <strong>1б. Java:</strong> Spring Data JPA. Вся логика заключена в имени метода и, к счастью, IDEA даёт отличные подсказки по Ctrl+Space в процессе его написания.
+        И таймзоны указывать не приходится, свойства в конфигурации достаточною.
+    {% highlight java %}
+    public interface MeetingRepository extends JpaRepository<MeetingEntity, Long> {
+        //equivalent to "select m from MeetingEntity m where m.meetingTimeOdt > :time"
+        Stream<MeetingEntity> findByMeetingTimeOdtAfterOrderByMeetingTimeOdt(OffsetDateTime time);
+    }
+    //MeetingDaoSpringDataJpa:
+    public List<MeetingDto> findAllActual() {
+        return meetingRepository.findByMeetingTimeOdtAfterOrderByMeetingTimeOdt(OffsetDateTime.now().minusHours(1))
+        .map(MeetingEntity::toDto)
+        .collect(Collectors.toList());
+    }   {% endhighlight %}
+    </li>
+    <li>
+        <strong>2. Java:</strong>Библиотека Jackson преобразовывает объект в строку, которая будет передана по Http.
+        Фомат даты совпадает с ISO 8601, чтобы javascript смог его распарсить без необходимости указания формата.
+    {% highlight java %}
+    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSSXXX")
+    private Date meetingTimeDate;
+    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSSXXX")
+    private OffsetDateTime meetingTimeOffsetDateTime;  {% endhighlight %}
+    </li>
+    <li>
+        <strong>3. Java:</strong> Spring MVC обрабатывает аннотацию @GetMapping, в результате чего будет создан сервлет,
+        к которому браузер обратится с HTTP GET запросом (/api/meeting/actual).
+    {% highlight java %}
+    @GetMapping("/actual")
+    List<MeetingDto> actual() {
+        return meetingDao.findAllActual();
+    }  {% endhighlight %}
+    </li>
+    <li><strong>4. Javascript:</strong> При загрузке страницы, а также после операций добавления или удаления, выполняется AJAX GET запрос.
+        Javascript преобразовывает текст в формате JSON в объект, представляющий из себя массив объектов, соответствующих структуре класса MeetingDto.
+    {% highlight javascript %}
+    $.get("/api/meeting/actual", function (data) {
+        fillMeetingTable(data);
+    }); {% endhighlight %}
+    </li>
+    <li><strong>5. Javascript:</strong> Результат вызова REST сервиса используется для наполнения таблицы при помощи динамического манипулирования DOM.
+    {% highlight javascript %}
+
+    function fillMeetingTable(meetings) {
+        var mtgtbody = $('#meetingsTbody');
+        mtgtbody.empty();
+
+        meetings.forEach((m, i) => {
+          let tr = $('<tr>')
+            .append($('<td>').text(m.description))
+                .append($('<td>').text(formatLocal(Date.parse(m.meetingTimeDate))))
+                .append($('<td>').text(formatLocal(Date.parse(m.meetingTimeOffsetDateTime))))
+                .append($('<td>').text(formatNy(Date.parse(m.meetingTimeDate))))
+                .append($('<td>').text(formatNy(Date.parse(m.meetingTimeOffsetDateTime))))
+                .append($('<td>').append(removeBtn));
+
+                mtgtbody.append(tr);
+        });
+    }{% endhighlight %}
+    </li>
+    <li><strong>6. Javascript:</strong> Тип Date в javascript аналогичен классу Date в java и, чтобы отобразить его в читаемом виде, нужно отформатировать
+    и указать таймзону, аналогично тому, как мы это делали с SimpleDateFormat. В javascript используется Intl. Часовой пояс пользователя определяется свойством
+        Intl.DateTimeFormat().resolvedOptions().timeZone.
+    {% highlight javascript %}
+    function formatNy(date) {
+        var nyDf = new Intl.DateTimeFormat("en-US", {
+            weekday: "short",
+            hour: "numeric",
+            minute: "numeric",
+            timeZone: "America/New_York"
+        });
+        return nyDf.format(date);}
+    function formatLocal(date) {
+        var localDf = new Intl.DateTimeFormat("ru", {
+            weekday: "short",
+            hour: "numeric",
+            minute: "numeric",
+            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+        });
+        return localDf.format(date);} {% endhighlight %}
+    </li>
+</ul>
+
+<p>
+    Теперь все компоненты связаны воедино, время и даты не смещаются. Корректность работы достигается за счёт того, что ни одно преобразовние
+    времени из числа в строку или эквивалентный тип не является неявным с использованием таймзоны по умолчанию.
+    Вместо этого таймзона всегда указывается - для JPA в конфигурации, для JDBC - при вызове setTimestamp/getTimestamp.
+    Классы Date и OffsetDateTime ведут себя одинаково.
+</p>
+
+<p>Чтобы объяснить, почему из java.time я посчитал наиболее подходящим OffsetDateTime, а не LocalDateTime или
+    ZonedDateTime, сделаю небольшой обзор классов пакета java.time, добавленного в Java 1.8.
+</p>
+
+<h4 id="javatime">java.time</h4>
+
+<p>За много лет существования класса Date разработчики разобрались, что к чему и отработати всевозможные сценарии его использования.
+    Кто-то перешёл на использование библиотек, например, joda time.
+    Тем не менее, в версии 1.8 появился полностью переработанный подход к работе с временем, датами и часовыми поясами.
+    Теперь для каждой операции существует специально подобранный тип данных, а переходы между ними требуют явного
+    указания недостающей информации.
+    Новый подход намного лучше, но требует подробного изучения и понимания. Кроме того, миграция существующих приложений
+    будет происходить ещё долго, и мы обречены видеть в коде смешение старого и нового подхода и бесчисленные преобразования туда и обратно.
+    Впечатление от java.time сугубо положительное, но нюансы использования ещё предстоит отработать на практике.
+</p>
+
+<p>
+    Так как нам нужны и дата, и время, то я остановлюсь на типах Instant, LocalDateTime, ZonedDateTime и OffsetDateTime,
+    а LocalDate, LocalTime и другие оставлю на другой случай.
+    Первое отличие всех этих классов от Date в том, что точность увеличена с миллисекунд до наносекунд.
+    Второе, основное - в разделении по сценариям использования.
+    Выбирая правильный класс, мы скорее всего будем оперировать только с ним, а отдельные случаи преобразования к другим классам всегда будут явными.
+</p>
+
+<dl class="dl-horizontal">
+    <dt>LocalDateTime</dt>
+    <dd>
+    Не указывает на конкретный момент времени. Хранит год, месяц, день, час, минуты, секунды и наносекунды.
+    Основные операции - смещение, сравнение. Преобразование к Instant требует указания ZoneOffset.
+    {% highlight java %}
+    LocalDateTime ldt = LocalDateTime.of(2022, 1, 2, 12, 59, 0);
+    System.out.println(ldt);//2022-01-02T12:59
+    System.out.println(ldt.plusMonths(6));//2022-07-02T12:59
+    System.out.println(ldt.toInstant(ZoneOffset.UTC));//2022-01-02T12:59:00Z
+    //туда и обратно. начинается небольшая путаница, почему в одну сторону ZoneOffset, а обратно ZoneId
+    assertEquals(ldt, LocalDateTime.ofInstant(
+    ldt.toInstant(ZoneOffset.UTC), ZoneId.of("UTC")));//test passed    {% endhighlight %}
+    </dd>
+    <dt>Instant</dt>
+    <dd>
+    Указывает на момент времени. Полностью аналогичен Date, только точность до наносекунд. Не позволяет определить компоненты времени
+    без указания таймзоны. Часто требуется преобразовать к ZonedDateTime, для этого указываем ZoneId.
+    {% highlight java %}
+    Instant instant = Instant.now();
+    //toString у Instant правильнее, чем у Date - использует UTC, а не местное время
+    System.out.println(instant);//2020-03-22T14:00:54.071078700Z
+    ZonedDateTime zdt = instant.atZone(ZoneId.of("Europe/Moscow"));
+    System.out.println(zdt);//2020-03-22T17:00:54.071078700+03:00[Europe/Moscow]    {% endhighlight %}
+    </dd>
+    <dt>ZonedDateTime / OffsetDateTime</dt>
+    <dd>ZonedDateTime можно воспринимать как комбинацию трёх составляющих: момент времени (Instant), смещение (ZoneOffset) и правил вычисления времени (ZoneRules),
+        отвечающих в основном за переход на зимнее и летнее время.
+        OffsetDateTime - это только Instant + ZoneOffset. В конкретный момент времени разница невелика, но если при операциях сдвига времени (plus/minus)
+        попасть на перевод часов, то получим разный результат.
+        OffsetDateTime всё равно будет работать правильно, он не потеряет и не добавит час по ошибке, но после добавления 24 часов к 24 октября
+        ZonedDateTime продолжает указывать правильное время по Лондону, а OffsetDateTime указывает на абстрактный часовой пояс со смещением +1 час.
+    {% highlight java %}
+    ZonedDateTime zdtLondon = ZonedDateTime.of(
+    LocalDateTime.of(2020, 10, 24, 10, 0), ZoneId.of("Europe/London"));
+
+    OffsetDateTime odtLondon = zdtLondon.toOffsetDateTime();
+
+    System.out.println(zdtLondon.plusHours(24).getOffset());//Z
+    System.out.println(odtLondon.plusHours(24).getOffset());//+01:00    {% endhighlight %}
+    </dd>
+</dl>
+
+<p>
+    Ещё одно важное отличие OffsetDateTime и ZonedDateTime в операциях сравнения: для первого equals вернёт true, если это тот же самый момент времени,
+    для второго нужно, чтобы кроме этого совпало строковое представление таймзоны. Неколько примеров:
+
+    {% highlight java %}
+    Instant now = Instant.now();
+    ZonedDateTime zdtMoscow = now.atZone(ZoneId.of("Europe/Moscow"));
+    ZonedDateTime zdtMinsk = now.atZone(ZoneId.of("Europe/Minsk"));
+
+    System.out.println(
+        zdtMoscow.equals(zdtMinsk));//false
+    System.out.println(
+        zdtMoscow.toOffsetDateTime().equals(zdtMinsk.toOffsetDateTime()));//true
+    System.out.println(
+       //false, потеряли строковое представление. Было "Europe/Moscow", стало "+03:00"
+       zdtMoscow.equals(zdtMoscow.toOffsetDateTime().toZonedDateTime()));
+    System.out.println(
+        zdtMinsk.equals(zdtMinsk.toOffsetDateTime().atZoneSameInstant(ZoneId.of("Europe/Minsk"))));//true    {% endhighlight %}
+</p>
+
+<p>Для наглядности я сгруппировал все доступные ZoneId, соответствующие одному ZoneOffset в таблице:</p>
+
+<div class="halfheight">
+    <table class="table table-bordered">
+        <thead>
+        <tr>
+            <th>Смещение</th>
+            <th>Список ZoneId с таким смещением (на момент epochMillis=0)</th>
+        </tr>
+        </thead>
+        <tbody>
+
+        <tr>
+            <td>-12:00</td>
+            <td>Pacific/Kwajalein, Pacific/Enderbury, Kwajalein, Etc/GMT+12</td>
+        </tr>
+        <tr>
+            <td>-11:30</td>
+            <td>Pacific/Niue</td>
+        </tr>
+        <tr>
+            <td>-11:00</td>
+            <td>Pacific/Pago_Pago, Pacific/Fakaofo, Pacific/Samoa, Pacific/Apia, America/Atka, US/Samoa, America/Adak,
+                US/Aleutian, Etc/GMT+11, America/Nome, Pacific/Midway
+            </td>
+        </tr>
+        <tr>
+            <td>-10:40</td>
+            <td>Pacific/Kiritimati</td>
+        </tr>
+        <tr>
+            <td>-10:30</td>
+            <td>Pacific/Rarotonga</td>
+        </tr>
+        <tr>
+            <td>-10:00</td>
+            <td>Pacific/Honolulu, US/Alaska, Pacific/Tahiti, Pacific/Johnston, US/Hawaii, America/Anchorage,
+                SystemV/HST10, Etc/GMT+10
+            </td>
+        </tr>
+        <tr>
+            <td>-09:30</td>
+            <td>Pacific/Marquesas</td>
+        </tr>
+        <tr>
+            <td>-09:00</td>
+            <td>Etc/GMT+9, Pacific/Gambier, America/Yakutat, America/Dawson, SystemV/YST9, SystemV/YST9YDT</td>
+        </tr>
+        <tr>
+            <td>-08:30</td>
+            <td>Pacific/Pitcairn</td>
+        </tr>
+        <tr>
+            <td>-08:00</td>
+            <td>Etc/GMT+8, Canada/Yukon, US/Pacific-New, Mexico/BajaSur, America/Dawson_Creek, America/Juneau,
+                America/Metlakatla, America/Inuvik, Canada/Pacific, PST8PDT, America/Mazatlan, Mexico/BajaNorte,
+                America/Sitka, America/Tijuana, SystemV/PST8, America/Hermosillo, America/Bahia_Banderas,
+                America/Santa_Isabel, America/Vancouver, America/Ensenada, America/Whitehorse, America/Fort_Nelson,
+                SystemV/PST8PDT, America/Los_Angeles, US/Pacific
+            </td>
+        </tr>
+        <tr>
+            <td>-07:00</td>
+            <td>Etc/GMT+7, US/Arizona, America/Denver, America/Yellowknife, America/Swift_Current, SystemV/MST7,
+                America/Boise, America/North_Dakota/Beulah, MST7MDT, America/North_Dakota/Center, US/Mountain,
+                America/Creston, America/Edmonton, Canada/Mountain, America/Cambridge_Bay, Navajo, America/Phoenix,
+                SystemV/MST7MDT, America/North_Dakota/New_Salem, America/Shiprock
+            </td>
+        </tr>
+        <tr>
+            <td>-06:00</td>
+            <td>America/El_Salvador, America/Guatemala, America/Belize, America/Managua, America/Indiana/Petersburg,
+                America/Chicago, America/Tegucigalpa, Etc/GMT+6, Pacific/Easter, America/Regina, Mexico/General,
+                America/Rankin_Inlet, US/Central, America/Rainy_River, America/Costa_Rica, America/Indiana/Knox,
+                America/Monterrey, SystemV/CST6, America/Kentucky/Monticello, America/Chihuahua, America/Ojinaga,
+                Chile/EasterIsland, America/Mexico_City, America/Matamoros, CST6CDT, America/Knox_IN, America/Resolute,
+                Canada/Central, America/Cancun, US/Indiana-Starke, SystemV/CST6CDT, America/Merida, Canada/Saskatchewan,
+                America/Winnipeg
+            </td>
+        </tr>
+        <tr>
+            <td>-05:00</td>
+            <td>America/Panama, America/Eirunepe, America/Grand_Turk, Cuba, Etc/GMT+5, America/Fort_Wayne,
+                America/Havana, America/Porto_Acre, US/Michigan, America/Louisville, America/Guayaquil,
+                Pacific/Galapagos, America/Indiana/Vevay, America/Indiana/Vincennes, America/Indianapolis,
+                America/Iqaluit, America/Kentucky/Louisville, EST5EDT, America/Nassau, America/Jamaica,
+                America/Atikokan, America/Coral_Harbour, America/Cayman, America/Indiana/Tell_City,
+                America/Indiana/Indianapolis, America/Thunder_Bay, America/Indiana/Marengo, America/Bogota,
+                America/Menominee, SystemV/EST5, US/Eastern, Canada/Eastern, America/Port-au-Prince, America/Nipigon,
+                Brazil/Acre, US/East-Indiana, America/Lima, America/Rio_Branco, America/Detroit, Jamaica,
+                America/Montreal, America/Indiana/Winamac, America/New_York, America/Toronto, SystemV/EST5EDT
+            </td>
+        </tr>
+        <tr>
+            <td>-04:30</td>
+            <td>America/Santo_Domingo</td>
+        </tr>
+        <tr>
+            <td>-04:00</td>
+            <td>America/Cuiaba, America/Marigot, America/Miquelon, Canada/Atlantic, Etc/GMT+4, America/Manaus,
+                America/St_Thomas, America/Anguilla, America/Barbados, America/Curacao, America/Martinique,
+                America/Puerto_Rico, America/Port_of_Spain, SystemV/AST4, America/Kralendijk, America/Antigua,
+                America/Moncton, America/St_Vincent, America/Dominica, America/Santarem, America/Asuncion,
+                Atlantic/Bermuda, Atlantic/Stanley, Brazil/West, America/Aruba, America/Halifax, America/La_Paz,
+                America/Blanc-Sablon, America/Glace_Bay, America/St_Barthelemy, America/St_Lucia, America/Montserrat,
+                America/Lower_Princes, America/Thule, America/Tortola, America/Porto_Velho, America/Campo_Grande,
+                America/Goose_Bay, America/Virgin, America/Pangnirtung, America/Boa_Vista, America/Grenada,
+                America/St_Kitts, America/Caracas, America/Guadeloupe, SystemV/AST4ADT
+            </td>
+        </tr>
+        <tr>
+            <td>-03:45</td>
+            <td>America/Guyana</td>
+        </tr>
+        <tr>
+            <td>-03:30</td>
+            <td>America/St_Johns, America/Paramaribo, Canada/Newfoundland</td>
+        </tr>
+        <tr>
+            <td>-03:00</td>
+            <td>Chile/Continental, America/Argentina/Catamarca, America/Argentina/Cordoba, America/Araguaina,
+                America/Argentina/Salta, Etc/GMT+3, America/Montevideo, Brazil/East, America/Argentina/Mendoza,
+                America/Argentina/Rio_Gallegos, America/Catamarca, America/Godthab, America/Cordoba, America/Sao_Paulo,
+                America/Argentina/Jujuy, America/Cayenne, America/Recife, America/Buenos_Aires, America/Mendoza,
+                America/Maceio, America/Argentina/San_Luis, America/Santiago, America/Argentina/Ushuaia,
+                Antarctica/Palmer, America/Punta_Arenas, America/Fortaleza, America/Danmarkshavn,
+                America/Argentina/La_Rioja, America/Belem, America/Jujuy, America/Bahia, America/Argentina/San_Juan,
+                America/Argentina/ComodRivadavia, America/Argentina/Tucuman, America/Rosario,
+                America/Argentina/Buenos_Aires
+            </td>
+        </tr>
+        <tr>
+            <td>-02:00</td>
+            <td>Etc/GMT+2, Atlantic/Cape_Verde, America/Noronha, Brazil/DeNoronha, Atlantic/South_Georgia,
+                America/Scoresbysund
+            </td>
+        </tr>
+        <tr>
+            <td>-01:00</td>
+            <td>Etc/GMT+1, Atlantic/Azores, Africa/El_Aaiun, Africa/Bissau</td>
+        </tr>
+        <tr>
+            <td>-00:44:30</td>
+            <td>Africa/Monrovia</td>
+        </tr>
+        <tr>
+            <td>Z</td>
+            <td>GMT, Etc/GMT-0, Atlantic/St_Helena, Etc/GMT+0, Africa/Banjul, Etc/GMT, Africa/Freetown, Africa/Algiers,
+                Africa/Bamako, Africa/Conakry, Universal, Africa/Sao_Tome, Africa/Ceuta, Africa/Nouakchott,
+                Antarctica/Troll, UTC, Etc/Universal, Atlantic/Faeroe, Africa/Abidjan, Africa/Accra, Atlantic/Faroe,
+                Etc/UCT, GMT0, Zulu, Africa/Ouagadougou, Antarctica/Rothera, Atlantic/Reykjavik, Atlantic/Madeira,
+                Etc/Zulu, Iceland, Atlantic/Canary, Africa/Lome, Greenwich, Africa/Casablanca, Etc/GMT0, Africa/Dakar,
+                WET, Etc/Greenwich, Africa/Timbuktu, UCT, Etc/UTC
+            </td>
+        </tr>
+        <tr>
+            <td>+01:00</td>
+            <td>Europe/London, Europe/Brussels, Europe/Warsaw, CET, Etc/GMT-1, Europe/Jersey, Europe/Luxembourg,
+                Europe/Guernsey, Europe/Isle_of_Man, Africa/Tunis, Europe/Malta, Europe/Busingen, Africa/Malabo,
+                Europe/Skopje, Europe/Sarajevo, GB-Eire, Africa/Lagos, Europe/Rome, Europe/Zurich, GB, Europe/Gibraltar,
+                Europe/Vaduz, Europe/Ljubljana, Portugal, Europe/Berlin, Europe/Stockholm, Europe/Budapest,
+                Europe/Zagreb, Europe/Paris, Africa/Ndjamena, Europe/Prague, Europe/Copenhagen, Europe/Vienna,
+                Europe/Tirane, MET, Eire, Europe/Amsterdam, Europe/Dublin, Africa/Libreville, Europe/San_Marino,
+                Africa/Douala, Africa/Brazzaville, Africa/Porto-Novo, Poland, Europe/Andorra, Europe/Lisbon,
+                Europe/Oslo, Europe/Podgorica, Europe/Belfast, Africa/Luanda, Atlantic/Jan_Mayen, Africa/Kinshasa,
+                Europe/Madrid, Africa/Bangui, Europe/Belgrade, Africa/Niamey, Europe/Bratislava, Arctic/Longyearbyen,
+                Europe/Vatican, Europe/Monaco
+            </td>
+        </tr>
+        <tr>
+            <td>+02:00</td>
+            <td>Africa/Cairo, Africa/Mbabane, Europe/Istanbul, Etc/GMT-2, Libya, Africa/Kigali, Africa/Tripoli, Israel,
+                Africa/Windhoek, Europe/Bucharest, Europe/Mariehamn, Africa/Lubumbashi, Asia/Istanbul, Europe/Helsinki,
+                Asia/Beirut, Asia/Tel_Aviv, Europe/Sofia, Africa/Gaborone, Asia/Gaza, Africa/Maputo, Asia/Damascus,
+                Asia/Jerusalem, Africa/Bujumbura, Africa/Maseru, Africa/Blantyre, Africa/Lusaka, Africa/Harare, Turkey,
+                Africa/Khartoum, Africa/Johannesburg, Africa/Juba, Asia/Nicosia, Asia/Famagusta, EET, Asia/Hebron,
+                Egypt, Asia/Amman, Europe/Nicosia, Europe/Athens
+            </td>
+        </tr>
+        <tr>
+            <td>+03:00</td>
+            <td>Asia/Aden, Africa/Nairobi, Etc/GMT-3, Europe/Zaporozhye, Indian/Comoro, Antarctica/Syowa,
+                Europe/Kaliningrad, Africa/Mogadishu, Africa/Asmera, Europe/Tiraspol, Europe/Moscow, Europe/Chisinau,
+                Africa/Djibouti, Europe/Simferopol, Africa/Asmara, Europe/Riga, Asia/Baghdad, Africa/Dar_es_Salaam,
+                Africa/Addis_Ababa, Europe/Uzhgorod, Asia/Riyadh, Asia/Kuwait, Africa/Kampala, Europe/Minsk,
+                Europe/Kiev, Europe/Vilnius, Indian/Antananarivo, Indian/Mayotte, Europe/Tallinn, W-SU
+            </td>
+        </tr>
+        <tr>
+            <td>+03:30</td>
+            <td>Iran, Asia/Tehran</td>
+        </tr>
+        <tr>
+            <td>+04:00</td>
+            <td>Asia/Yerevan, Etc/GMT-4, Asia/Dubai, Indian/Reunion, Indian/Mauritius, Europe/Saratov, Europe/Samara,
+                Indian/Mahe, Asia/Baku, Europe/Kirov, Asia/Qatar, Asia/Muscat, Asia/Bahrain, Europe/Volgograd,
+                Europe/Astrakhan, Asia/Tbilisi, Europe/Ulyanovsk
+            </td>
+        </tr>
+        <tr>
+            <td>+04:30</td>
+            <td>Asia/Kabul</td>
+        </tr>
+        <tr>
+            <td>+05:00</td>
+            <td>Asia/Aqtau, Etc/GMT-5, Asia/Samarkand, Asia/Karachi, Asia/Yekaterinburg, Indian/Chagos, Indian/Maldives,
+                Asia/Oral, Asia/Qyzylorda, Asia/Aqtobe, Asia/Ashkhabad, Asia/Ashgabat, Asia/Atyrau, Indian/Kerguelen
+            </td>
+        </tr>
+        <tr>
+            <td>+05:30</td>
+            <td>Asia/Kolkata, Asia/Kathmandu, Asia/Colombo, Asia/Thimbu, Asia/Katmandu, Asia/Thimphu, Asia/Calcutta</td>
+        </tr>
+        <tr>
+            <td>+06:00</td>
+            <td>Asia/Kashgar, Etc/GMT-6, Asia/Almaty, Asia/Dacca, Asia/Omsk, Asia/Dhaka, Asia/Dushanbe, Asia/Tashkent,
+                Antarctica/Mawson, Asia/Bishkek, Asia/Hovd, Antarctica/Vostok, Asia/Urumqi
+            </td>
+        </tr>
+        <tr>
+            <td>+06:30</td>
+            <td>Asia/Yangon, Asia/Rangoon, Indian/Cocos</td>
+        </tr>
+        <tr>
+            <td>+07:00</td>
+            <td>Etc/GMT-7, Asia/Phnom_Penh, Asia/Novosibirsk, Antarctica/Davis, Asia/Tomsk, Asia/Choibalsan,
+                Asia/Jakarta, Asia/Barnaul, Indian/Christmas, Asia/Ulan_Bator, Asia/Ulaanbaatar, Asia/Bangkok,
+                Asia/Vientiane, Asia/Novokuznetsk, Asia/Krasnoyarsk
+            </td>
+        </tr>
+        <tr>
+            <td>+07:30</td>
+            <td>Singapore, Asia/Kuala_Lumpur, Asia/Singapore</td>
+        </tr>
+        <tr>
+            <td>+08:00</td>
+            <td>Asia/Pontianak, Asia/Kuching, Asia/Chungking, Etc/GMT-8, Australia/Perth, Asia/Macao, Asia/Macau,
+                Asia/Shanghai, Asia/Ho_Chi_Minh, Antarctica/Casey, Asia/Chongqing, Asia/Taipei, Asia/Manila, PRC,
+                Asia/Ujung_Pandang, Asia/Harbin, Asia/Brunei, Australia/West, Asia/Hong_Kong, Asia/Saigon,
+                Asia/Makassar, Hongkong, Asia/Irkutsk
+            </td>
+        </tr>
+        <tr>
+            <td>+08:45</td>
+            <td>Australia/Eucla</td>
+        </tr>
+        <tr>
+            <td>+09:00</td>
+            <td>Etc/GMT-9, Pacific/Palau, Asia/Chita, Asia/Dili, Asia/Jayapura, Asia/Yakutsk, Asia/Pyongyang, ROK,
+                Asia/Seoul, Asia/Khandyga, Japan, Asia/Ust-Nera, Asia/Tokyo
+            </td>
+        </tr>
+        <tr>
+            <td>+09:30</td>
+            <td>Australia/North, Australia/Yancowinna, Australia/Adelaide, Australia/Broken_Hill, Australia/South,
+                Australia/Darwin
+            </td>
+        </tr>
+        <tr>
+            <td>+10:00</td>
+            <td>Pacific/Yap, Pacific/Port_Moresby, Australia/ACT, Pacific/Bougainville, Australia/Victoria,
+                Pacific/Chuuk, Australia/Queensland, Australia/Canberra, Australia/Currie, Pacific/Guam,
+                Australia/Lord_Howe, Pacific/Truk, Australia/NSW, Asia/Vladivostok, Pacific/Saipan,
+                Antarctica/DumontDUrville, Australia/Sydney, Australia/LHI, Australia/Brisbane, Etc/GMT-10,
+                Australia/Melbourne, Australia/Lindeman
+            </td>
+        </tr>
+        <tr>
+            <td>+11:00</td>
+            <td>Australia/Hobart, Australia/Tasmania, Pacific/Ponape, Antarctica/Macquarie, Pacific/Pohnpei,
+                Pacific/Efate, Asia/Magadan, Asia/Sakhalin, Pacific/Noumea, Etc/GMT-11, Asia/Srednekolymsk,
+                Pacific/Guadalcanal
+            </td>
+        </tr>
+        <tr>
+            <td>+11:30</td>
+            <td>Pacific/Nauru, Pacific/Norfolk</td>
+        </tr>
+        <tr>
+            <td>+12:00</td>
+            <td>Antarctica/McMurdo, Pacific/Wallis, Pacific/Fiji, Pacific/Funafuti, NZ, Pacific/Wake,
+                Antarctica/South_Pole, Pacific/Tarawa, Pacific/Auckland, Pacific/Kosrae, Asia/Kamchatka, Etc/GMT-12,
+                Pacific/Majuro
+            </td>
+        </tr>
+        <tr>
+            <td>+12:45</td>
+            <td>NZ-CHAT, Pacific/Chatham</td>
+        </tr>
+        <tr>
+            <td>+13:00</td>
+            <td>Pacific/Tongatapu, Etc/GMT-13, Asia/Anadyr</td>
+        </tr>
+        <tr>
+            <td>+14:00</td>
+            <td>Etc/GMT-14</td>
+        </tr>
+
+        </tbody>
+
+    </table>
+</div>
+
+<p>
+    По логике нам подходят все типы данных, которые указывают на точный момент времени, потому что их можно будет однозначно преобразовать к java.sql.Timestamp
+    и передать драйверу JDBC. Из всего вышеперечисленного это Instant, OffsetDateTime и ZonedDateTime.
+    JPA не поддерживает Instant и ZonedDateTime, поэтому остаётся только OffsetDateTime. Если выбрать LocalDateTime, то предположу, что
+    потребуются явные конвертеры в Timestamp и возникнет путаница между локльной таймзоной и таймзоной сервера базы данных. Сам такой сценарий я не тестировал.
+</p>
+
+<p>Использование классов из пакета java.time в JPA/Hibernate требует либо написания конвертеров, либо версий JPA 2.2+ и Hibernate 5.3+.
+    Если у Вас в проекте старая версия Hibernate с широкой завязкой на определённые специфичные классы и методы (на вскидку: setFlushMode, UserType), то
+    при миграции потребуются значительные усилия, чтобы скомпилировать проект, и ещё большие, чтобы заставить его снова корректно работать.
+</p>
+
+<h4>Заключение</h4>
+<p>Работа с датой и временем в Java основана на манипуляцияхх с классом Date. Начиная с Java 1.8 появились специализированные типы,
+    использование которых позволяет структурировать операции и делает их более строгими.
+    Тем не менее, проблема ошибочного смещения времени при сохранении и чтении из базы данных не решается простым переходом на классы пакета java.time.
+    Решается эта проблема отказом от любых неаявных преобразований времени и использования таймзоны по умолчанию. Вместо этого любые методы
+    PreparedStatement.setTimestamp/getTimestamp, Query.setParameter/getParаmeter, переопределённые UserType в Hibernate и так далее должны явным образом указывать временную зону,
+    соответствующие той, которая используется в базе данных. В JPA + Spring Boot последних версий достаточно устаносить свойство hibernate.jdbc.time_zone.
+</p>
