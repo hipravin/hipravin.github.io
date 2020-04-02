@@ -9,7 +9,7 @@
 }
 
 .navbar-brand {
-    font-size: 1.5em;
+    font-size: 1.1em;
 }
 
 .nav-link{
@@ -24,6 +24,12 @@
 @media only screen and (min-width: 992px) {
     .logo {
         background-image: url("/img/icons8-java-white.svg");
+    }
+}
+
+@media only screen and (min-width: 768px) {
+    .navbar-brand {
+        font-size: 1.5em;
     }
 }
 
