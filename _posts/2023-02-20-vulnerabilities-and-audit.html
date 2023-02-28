@@ -1,0 +1,222 @@
+---
+layout: post
+title: Безопасность, уязвимости и аудит приложений
+excerpt: TODO
+metadescription: TODO
+---
+
+<p>
+    TODO:
+
+    https://www.oracle.com/java/technologies/javase/seccodeguide.html
+</p>
+
+<h3>
+    Поиск уязвимостей и аудит
+</h3>
+
+<p>
+    TODO:
+</p>
+
+<h3>
+    Тестовое приложение
+</h3>
+
+<p>
+    TODO:
+</p>
+
+
+<h3>
+    Пароли в репозитории
+</h3>
+
+<p>
+    TODO:
+</p>
+
+
+<h3>
+    Сообщения об ошибках без фильтрации
+</h3>
+
+<p>
+    TODO:
+</p>
+
+
+<h3>
+    Внедрение SQL-кода (SQL injection)
+</h3>
+
+<p>
+    TODO:
+</p>
+
+<h3>
+    Межсайтовая подделка запроса (Cross Site Request Forgery / CSRF)
+</h3>
+
+<p>
+    TODO:
+</p>
+
+<h3>
+    Межсайтовый скриптинг (Cross-Site Scripting / XSS)
+</h3>
+
+<p>
+    TODO:
+</p>
+
+<h3>
+    Исполнение кода из недоверенных источников
+</h3>
+
+<p>
+    TODO:
+</p>
+
+<h3>
+    Конфиденциальная информация в логах
+</h3>
+
+<p>
+    TODO:
+</p>
+
+
+<h3>
+    HTTP вместо HTTPS
+</h3>
+
+<p>
+    TODO:
+</p>
+
+
+<h3>
+    Беззащитный Spring Boot Actuator
+</h3>
+
+<p>
+    TODO:
+</p>
+
+<h3>
+    Ненадлежащее разделение прав доступа
+</h3>
+
+<p>
+    TODO:
+</p>
+
+
+<h3>Заключение</h3>
+<p>
+    TODO
+</p>
+
+
+
+
+============
+Заметки:
+
+Требования, предъявляемые к коду и процессам разработки программ со стороны руководства или регуляторов могут показаться избыточными.
+Исправление отдельных уязвимостей может потребовать значительных усилий со стороны разработчика, не неся никакой немедленной пользы для приложения.
+Не появляется новый функционал, не исправляются текущие ошибки, не улучшается производительность.
+Более того, если переусердствовать с исправлением проблем безопасности без должного регрессионного тестирования и аккуратности можно полностью сломать всю систему.
+Это может произойти как в момент релиза, так и в случайный момент времени в будущем. Например, по истечение срока действия ssl сертификата.
+Или можно так сильно спрятать пароль корневого пользователя, что когда он однажды понадобится, никто не сможет его найти.
+Иногда риски могут быть преувеличены и можно не торопиться с исправлениями или вообще проигнорировать проблему.
+Но как отличить критические уязвимости от незначительных? Как оценивать риски?
+
+В общем случае лучше перестраховаться и не допускать, как минимум, типовых ошибок и стандартных уязвимостей.
+Требования регулятора, если компания под них подпадает, придётся исполнять рано или поздно.
+Сложные же случаи решаются индивидуально в зависимости от стоимости устранения уязвимостей и сопутствующих рисков.
+В принятии подобных решений могут участвовать эксперты по безопасности, архитектор, менеджер проекта.
+
+
+
+=====
+Компрометация данных банковских аккаунтов 200 тысяч клиентов Ситибанка в 2011.
+
+https://www.apisec.ai/blog/what-made-citis-hack-much-worse-how-to-avoid-the-same-mistake
+
+====
+Утечка данных из Elasticsearch
+
+https://www.zdnet.com/article/elasticsearch-server-exposed-the-personal-data-of-over-57-million-us-citizens/
+https://www.elastic.co/blog/tips-to-secure-elasticsearch-clusters-for-free-with-encryption-users-and-more
+
+
+===
+
+Утечка данных клиентов банка Morgan Stanley в 2016
+
+https://www.infosecurity-magazine.com/news/morgan-stanley-agrees-data-breach/
+
+
+==============
+https://owasp.org/www-community/attacks/csrf
+
+CSRF is an attack that tricks the victim into submitting a malicious request.
+It inherits the identity and privileges of the victim to perform an undesired function on the victim’s behalf.
+
+Fortunately, this request will not be executed by modern web browsers thanks to same-origin policy restrictions.
+
+//
+@CrossOrigin (*)   - чтобы показать дыру
+
+https://stackoverflow.com/questions/24680302/csrf-protection-with-cors-origin-header-vs-csrf-token
+
+==============
+Enterprise Cybersecurity in Digital Business  Ariel Evans
+
+Part I: The Evolution of Cybersecurity.
+1. Cyber – A business Issue
+2. ‘Cyber Risk’
+3. ‘The History of Cybersecurity’
+4. ‘Cyber Consequences’
+5. ‘Cyber Trends and Spending’
+6. ‘Cyber Roles’
+Part II: Cybersecurity Basics.
+7. ‘Cyber –Attack Surfaces and Digital Asset Inventories’
+8. ‘Cyber Terminology and Statistics’
+9. ‘Enterprise Threats of Today and Cybercriminals’
+10. ‘Cybersecurity Regulations, Standards and Frameworks’
+11. ‘Enterprise Cybersecurity Programs’
+12. ‘Organizational Cyber Maturities’
+Part III: Cybersecurity Tools.
+13. ‘Cyber Policies’
+14. ‘Cybersecurity Tools
+Part IV: Cybersecurity Regulation.
+15. ‘U.S. Federal Regulations’
+16. ‘U.S. State Regulations’
+17. ‘New York State Department of Financial Services Part 500’
+18. ‘Global, Industry or Other Types of Cybersecurity Regulations’
+Part V: Incident Response, Forensics and Audit.
+19. ‘Incident Response Plans’
+20. ‘Forensic Methods’
+21. ‘IT Audit’
+Part VI: Cybersecurity Risk Management.
+22. ‘Cybersecurity Financial Exposures’
+23. ‘Digital Asset Cyber Risk Modeling and Scoring’
+24. ‘Mitigating Cybersecurity Scores and Residual Cyber Risk Scores’
+Part VII: GDPR and Privacy.
+25. ‘GDPR Overview’
+26. ‘GDPR Articles’
+27. ‘GDRP Evidence’
+28. ‘GDPR Privacy Impact Assessment (PIA)’
+Part VIII: Cybersecurity Risk Management Strategy.
+29. ‘CISO Strategies’
+30. ‘Cyber in the Board Room’
+Part IX: Cybersecurity Insurance.
+31. ‘Cyber Insurance Overview’
+32. ‘Calculating Limits Adequacy’
+33. ‘Ransomware Strategies’
+Part X: Introduction to Cybersecurity Vendor Risk Management.
+34. ‘Vendor Risk Overview’
+35. ‘Vendor Cybersecurity Regulations’
