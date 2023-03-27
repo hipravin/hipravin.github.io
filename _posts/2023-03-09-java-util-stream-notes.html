@@ -1,12 +1,20 @@
 ---
 layout: post
 title: Заметки о java.util.Stream
-excerpt:
+excerpt: Практики и тонкости использования Stream, неполное руководство
 metadescription:
 ---
 
 <p>
-    TODO:
+    Stream API - принципиально новый способ работы с коллекциями в Java.
+    Вернее, так было во времена релиза Java 8 в далёком 2014 году,
+    который принёс в классический императивный объектно-ориентированный язык программирования элементы функционального программирования.
+    Ввиду масштаба нововведений сначала перед разработчиками стояла задача изучить новые подходы и наработать опыт их применения.
+    После первого знакомства возник соблазн применять функциональный стиль в любой возможной ситуации,
+    даже если в итоге получались сложные причудливые и никому не понятные конструкции.
+    Тогда могло возникнуть обратное желание - отказаться от всех новшеств, если в них нет очевидной необходимости.
+    В данной статье я опишу отдельные примеры использования Stream, которые кажутся мне наиболее интересными и показательными, чтобы
+    применять Stream API эффективно, делая код лучше и избежать ошибок.
 </p>
 
 
@@ -18,19 +26,71 @@ metadescription:
 
 
 ============
+https://www.oracle.com/technical-resources/articles/java/ma14-java-se-8-streams.html
+
+-2. Самый типовой и распространённый случай
+        stream
+        filter
+        filter
+        collect toList
+
+-1 Накладные расходы или насколько стримы медленные
+
+
+
+0. Полезные стримы:
+    SplittableRandom
+    FileWalk...?
+    Spring Data
+
+001 forEach forEachOrdered
+
+01 Оптимизация стрима - несколько filter, map в один - имеет ли смысл?
+
+
 1. Необходимость закрывать Stream
    Files.lines
+
+    Какие ещё стримы надо закрывать
+    https://docs.spring.io/spring-data/jpa/docs/current/reference/html/
+    A Stream potentially wraps underlying data store-specific resources and must, therefore, be closed after usage. You can either manually close the Stream by using the close() method or by using a Java 7 try-with-resources block, as shown in the following example:
+
+JPA getResultStream
+hibernate-core 5.6.12-Final
+org.hibernate.internal.AbstractScrollableResults
+@Override
+public final void close() {
+if ( this.closed ) {
+// noop if already closed
+return;
+}
+
+// not absolutely necessary, but does help with aggressive release
+//session.getJDBCContext().getConnectionManager().closeQueryStatement( ps, resultSet );
+final JdbcCoordinator jdbcCoordinator = session.getJdbcCoordinator();
+jdbcCoordinator.getResourceRegistry().release( ps );
+jdbcCoordinator.afterStatementExecution();
+try {
+session.getPersistenceContextInternal().getLoadContexts().cleanup( resultSet );
+}
+catch (Throwable ignore) {
+// ignore this error for now
+if ( LOG.isTraceEnabled() ) {
+LOG.tracev( "Exception trying to cleanup load context : {0}", ignore.getMessage() );
+}
+}
+
+this.closed = true;
+}
+
+
 2. Spring data returning Stream - transaction
 
-3. Стримы изнутри Reference Pipeline
+3. Стримы изнутри - Reference Pipeline ?
 
-
-
-
-4. Накладные расходы при использовании для простых вычислений
-
-
-5. Параллельные вычисления, ordering
+5. Параллельные вычисления, ordering /sorting
+https://developer.ibm.com/articles/j-java-streams-3-brian-goetz/#eo
+If the stream does have an encounter order, most stream operations must respect that order. For sequential executions, preserving encounter order is essentially free, because elements are naturally processed in the order in which they're encountered. Even in parallel, for many operations (stateless intermediate operations and certain terminal operations such as reduce()), respecting the encounter order doesn't impose any real costs. But for others (stateful intermediate operations, and terminal operations whose semantics are tied to encounter order, such as findFirst() or forEachOrdered()), the obligation to respect the encounter order in a parallel execution can be significant. If the stream has a defined encounter order, but that order isn't significant to the result, it might be possible to speed up parallel execution of pipelines containing order-sensitive operations by removing the ORDERED flag with the unordered() operation.
 
 6. Создание своих стримов
     -из итератора
@@ -38,4 +98,72 @@ metadescription:
 
 7. Сравнение кода со стримами и без
 
+8. Много стандартных примеров
 
+9 Промежуточные limit ?
+
+10. firstMatch vs anyMatch
+
+11. toMap without merge strategy
+
+12. IntStream и прочие там где можно вместо операций с объектами, производительность
+
+13. mapMulti examples and performance
+        (words - letters)
+
+статистика букв в словах длиннее трёх букв
+
+14 zip
+https://dzone.com/articles/bridge-the-gap-of-zip-operation
+
+15. method rerefence or not??
+
+16 teeing
+
+17 переход на стримы внутри проекта в качестве возвращаемого значения
+
+18 toList , Collectors.toList
+
+19 iterate and parallel
+Stream<Long> literate = Stream.iterate(1L, l -> l + 1)
+    .limit(100)
+    .peek(l -> System.out.println(Thread.currentThread().getName() + " - " + l + " peek"))
+    .limit(50)
+    .sorted()
+    .parallel(); //batch (1024), ArrayListSpliterator
+
+20 аргумент конструктора лучше limit
+
+====
+To summarize what we’ve learned so far, working with streams, in general, involves three things:
+
+A datasource (such as a collection) on which to perform a query
+A chain of intermediate operations, which form a stream pipeline
+One terminal operation, which executes the stream pipeline and produces a result
+
+
+
+
+
+
+Benchmark                                     (fileName)   Mode  Cnt      Score     Error  Units
+BenchmarkConfig.benchBufferedReader      sample-tiny.txt  thrpt   25  14053,105 ± 327,748  ops/s
+BenchmarkConfig.benchFileLines           sample-tiny.txt  thrpt   25  17067,844 ± 269,158  ops/s
+BenchmarkConfig.benchReadAllLines        sample-tiny.txt  thrpt   25  15002,664 ± 240,188  ops/s
+BenchmarkConfig.benchWithoutProperClose  sample-tiny.txt  thrpt   25   8510,614 ± 425,730  ops/s
+
+
+Benchmark                                  (fileName)  (minWordLength)   Mode  Cnt    Score    Error  Units
+BenchmarkConfig.imperative      voyna-i-mir-tom-1.txt                3  thrpt    9   11,762 ±  0,924  ops/s
+BenchmarkConfig.readFileFully   voyna-i-mir-tom-1.txt                3  thrpt    9  160,022 ± 21,510  ops/s
+BenchmarkConfig.streamFlatMap   voyna-i-mir-tom-1.txt                3  thrpt    9   10,966 ±  1,056  ops/s
+BenchmarkConfig.streamMapMulti  voyna-i-mir-tom-1.txt                3  thrpt    9   10,941 ±  1,703  ops/s
+
+Benchmark                                  (fileName)  (minWordLength)   Mode  Cnt    Score    Error  Units
+BenchmarkConfig.imperative      voyna-i-mir-tom-1.txt                3  thrpt    9   13,847 ±  1,753  ops/s
+BenchmarkConfig.readFileFully   voyna-i-mir-tom-1.txt                3  thrpt    9  188,147 ± 33,165  ops/s
+BenchmarkConfig.streamFlatMap   voyna-i-mir-tom-1.txt                3  thrpt    9   12,424 ±  2,093  ops/s
+BenchmarkConfig.streamMapMulti  voyna-i-mir-tom-1.txt                3  thrpt    9   13,087 ±  1,238  ops/s
+BenchmarkConfig.sum3FlatMap                       N/A              N/A  thrpt    9    2,034 ±  0,303  ops/s
+BenchmarkConfig.sum3MapMulti                      N/A              N/A  thrpt    9    4,544 ±  0,511  ops/s
+BenchmarkConfig.sum3MapMulti2                     N/A              N/A  thrpt    9    4,579 ±  0,830  ops/s
