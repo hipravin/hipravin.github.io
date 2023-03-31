@@ -6,7 +6,7 @@ metadescription:
 ---
 
 <p>
-    Stream API - принципиально новый способ работы с коллекциями в Java.
+    Stream API (поток) - принципиально новый способ работы с коллекциями в Java.
     Вернее, так было во времена релиза Java 8 в далёком 2014 году,
     который принёс в классический императивный объектно-ориентированный язык программирования элементы функционального программирования.
     Ввиду масштаба нововведений сначала перед разработчиками стояла задача изучить новые подходы и наработать опыт их применения.
@@ -17,9 +17,91 @@ metadescription:
     применять Stream API эффективно, делая код лучше и избегая ошибок.
 </p>
 
-<p>
+<h4>Основы и мотивация</h4>
 
+<p>
+    Лучшим введением в потоки был бы перевод
+    <a href="https://www.oracle.com/technical-resources/articles/java/ma14-java-se-8-streams.html">этой обучающей статьи с сайта Oracle.</a>
+    Однако, это слишком громоздко и, в целом, не нужно. Я предполагаю, что читатель уже знаком с потоками и имеет определённый опыт их применения.
+    Я приведу вольный перевод основных тезисов, которые будут полезны для дальнейших примеров.
 </p>
+
+<ul>
+    <li>
+        Почти каждое приложение работает с коллекциями: поиск, выбор элементов, трансформации, сортировки, поиски максимальных значений, агрегации.
+        Несмотря на свою значимость и вездесущность, работа с коллекциями в Java далека от идеала.
+        Приходится многократно реализовывать типовые алгоритмы с использованием циклов и условных операторов.
+    </li>
+    <li>
+        Использование многоядерной архитектуры для ускорения работы с большими коллекциями требует написания сложного многопоточного кода, подверженного ошибкам.
+    </li>
+    <li>
+        Потоки - новая абстракция, добавленная в Java 8, призваны решить эти и многие другие проблемы. Во-первых, они позволяют писать код
+        в декларативном стиле. Во-вторых, позволяют использовать параллельные вычисления без написания многопоточного кода.
+    </li>
+</ul>
+
+<p>
+    Также в статье сравнивается код, написанный с использованием разных подходов. Он решает задачу выборки определённых транзакций
+    с последующей сортировкой и получением списка идентификаторов.
+</p>
+
+{% highlight java %}
+    //Классический подход
+    List<Transaction> groceryTransactions = new Arraylist<>();
+    for(Transaction t: transactions){
+        if(t.getType() == Transaction.GROCERY){
+            groceryTransactions.add(t);
+        }
+    }
+    Collections.sort(groceryTransactions, new Comparator(){
+        public int compare(Transaction t1, Transaction t2){
+            return t2.getValue().compareTo(t1.getValue());
+        }
+    });
+    List<Integer> transactionIds = new ArrayList<>();
+        for(Transaction t: groceryTransactions){
+            transactionsIds.add(t.getId());
+        }
+    }
+{% endhighlight %}
+
+{% highlight java %}
+    //Реализация с использованием потоков
+    List<Integer> transactionsIds = transactions.stream()
+        .filter(t -> t.getType() == Transaction.GROCERY)
+        .sorted(comparing(Transaction::getValue).reversed())
+        .map(Transaction::getId)
+        .toList();
+{% endhighlight %}
+
+<h4>
+    Теперь только потоки?
+</h4>
+
+<p>
+    Пожалуй, всё это звучит чересчур оптимистично.
+    Пример задачи и её реализации, в котором объём кода уменьшается в два-три раза достаточно искусственный.
+    Использовать достоинства параллельных вычислений, избегая недостатков, таких как сложность реализации и трудноуловимые ошибки - наивно.
+    Может быть это больше стремление идти в ногу со временем, сделать язык более современным?
+    Java сообщество давно требовало элементов функционального программирования. Кто-то перешёл на Scala, вдохновлённый лаконичностью и выразительностью функционального кода.
+    Многие стали активно применять библиотеку guava, которая позволяет написать, например, такой код:
+
+    {% highlight java %}
+    //Доступно с 12 версии, опубликованной 30 апреля 2012 года
+    List<String> results =
+        FluentIterable.from(database.getClientList())
+        .filter(activeInLastMonthPredicate)
+        .transform(Functions.toStringFunction())
+        .limit(10)
+        .toList();
+    {% endhighlight %}
+    Выглядит очень знакомо. Функциональный стиль программирования сформировался уже давно и для Java разработчиков изменение именно в том, что потоки добавлены в сам язык,
+    нет нужды в сторонних утилитах или библиотеках. Однако, не буду углубляться в философские рассуждения, а лучше перейду к практике.
+</p>
+
+
+
 
 <h3>Заключение</h3>
 <p>
@@ -29,6 +111,49 @@ metadescription:
 
 
 ============
+<li>
+    Потоки, добавленные в Java 8 приходят на помощь и решают все проблемы.
+</li>
+<li>
+    Не вдаваясь в суть задачи, её решение до Java 8 могло выглядеть так:
+</li>
+{% highlight java %}
+List<Transaction> groceryTransactions = new Arraylist<>();
+    for(Transaction t: transactions){
+    if(t.getType() == Transaction.GROCERY){
+    groceryTransactions.add(t);
+    }
+    }
+    Collections.sort(groceryTransactions, new Comparator(){
+    public int compare(Transaction t1, Transaction t2){
+    return t2.getValue().compareTo(t1.getValue());
+    }
+    });
+    List<Integer> transactionIds = new ArrayList<>();
+        for(Transaction t: groceryTransactions){
+        transactionsIds.add(t.getId());
+        }
+        }
+        {% endhighlight %}
+
+        <li>
+            Благодаря потокам код становится короче, лучше читается и является декларативным,
+            то есть отвечает на вопрос "что нужно сделать", а не "как сделать".
+        </li>
+        {% highlight java %}
+        List<Integer> transactionsIds =
+            transactions.stream()
+            .filter(t -> t.getType() == Transaction.GROCERY)
+            .sorted(comparing(Transaction::getValue).reversed())
+            .map(Transaction::getId)
+            .toList();
+            {% endhighlight %}
+            <li>
+                Краткое определение потоков: последовательность элементов из источника, которая поддерживает функции агрегации.
+            </li>
+            </ul>
+
+==============
 https://www.oracle.com/technical-resources/articles/java/ma14-java-se-8-streams.html
 
 -3 Начать с примера autocomplete почтовых индексов
@@ -139,6 +264,8 @@ Stream<Long> literate = Stream.iterate(1L, l -> l + 1)
     .parallel(); //batch (1024), ArrayListSpliterator
 
 20 аргумент конструктора лучше limit
+
+21 Iterable.spliterator вместо стековерфлоу
 
 ====
 To summarize what we’ve learned so far, working with streams, in general, involves three things:
