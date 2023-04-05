@@ -257,20 +257,43 @@ metadescription:
 
 <p>
     1. Начнём с перечисления самых простых и часто используемых способов и оценим, насколько они подходят для решения нашей задачи.
-    Пустой поток можно создать вызовом Stream.of() или Stream.empty().
+    Пустой поток можно создать вызовом Stream.of() или Stream.empty():
     {% highlight java %}
 
     Stream<String> emptyStream1 = Stream.of();
     Stream<String> emptyStream2 = Stream.empty();    {% endhighlight %}
 </p>
 <p>
-    2. Поток из фиксированного количества элементов можно создать с помощью метода Stream.of(...).
+    2. Поток из фиксированного количества элементов можно создать с помощью метода Stream.of(...):
     {% highlight java %}
 
     Stream<String> someLetters = Stream.of("a", "b", "c");    {% endhighlight %}
 </p>
 <p>
-    3. Метод Stream.iterate(...) позволяет создавать потоки, в которых следующий элемент можно получить из предыдущего.
+    3. Поток из фиксированного количества элементов можно создать также в помощью класса Stream.Builder:
+    {% highlight java %}
+
+    Stream<String> someLetters = Stream.<String>builder()
+        .add("a").add("b").add("c")
+        .build();    {% endhighlight %}
+    или так:
+    {% highlight java %}
+    Stream.Builder<String> builder = Stream.builder();
+    builder.accept("a");
+    builder.accept("b");
+    builder.accept("c");
+
+    Stream<String> someLetters = builder.build();
+
+    {% endhighlight %}
+    Такой способ может быть альтернативой созданию потока из ArrayList. Реализация Stream.Builder использует SpinedBuffer,
+    который вместо одного большого массива, содержащего все элементы использует массив массивов.
+    Такая реализация не требует непрерывной области памяти, в которую бы поместились все элементы,
+    что в теории упрощает управление памятью и снижает нагрузку на сборщик мусора.
+    На практике такой способ создания потоков используется редко.
+</p>
+<p>
+    4. Метод Stream.iterate(...) позволяет создавать потоки, в которых следующий элемент можно получить из предыдущего.
     Нужно задать начальный элемент и функцию получения следующего элемента (UnaryOperator).
     Дополнительно можно указать условие конца итерации.
     Например, получим поток дат (LocalDate) на 7 дней вперёд, а также поток дат до конца месяца:
@@ -292,10 +315,10 @@ metadescription:
     Перед тем, как пойти дальше, добавлю важное замечание касательно Stream.iterate.
     Интуитивно понятно, что такой поток нельзя обработать параллельно, так как мы не можем получить следующий элемент, не обработав предыдущий.
     Программа даже не знает, нужен ли следующий элемент вообще, может быть поток надо завершить из-за наступления условия, указанного параметром в takeWhile.
-    Так вот, это "интуитивное утверждение" полностью ошибочно. Работая с потоками следует избегать предположений о том, как код скорее всего работает, а вместо
+    Так вот, это "интуитивное утверждение" полностью ошибочно. Работая с потоками, следует избегать предположений о том, как код скорее всего работает, а вместо
     этого аккуратно следовать спецификации, указанной в документации. Никаких указаний на то, что к потоку,
     порождённому методом Stream.iterate нельзя применить вызов функции .parallel()  нет.
-    Давайте запустим такую программу:
+    Давайте запустим такую программу, которая порождает и печатает параллельно поток чисел от 0 до 9, но дополнительно печатает информацию о каждом вызове инкремента:
     {% highlight java %}
     UnaryOperator<Integer> incrementAndPrint = (i) -> {
         System.out.println("increment " + i);
@@ -315,15 +338,256 @@ metadescription:
 </p>
 
 <p>
-    4. Метод Stream.generate(Supplier s) позволяет создать бесконечные потоки, элементы которого - результат многократного вызова переданного
+    5. Метод Stream.generate(Supplier s) позволяет создать бесконечный поток, элементы которого - результат многократного вызова переданного
     Supplier. Ограничить такой поток можно при помощи функций limit или takeWhile. Например, сгенерируем десять случайных идентификаторов.
     {% highlight java %}
     Stream<String> uuids = Stream.generate(() -> UUID.randomUUID().toString())
-        .limit(10);
-       {% endhighlight %}
+        .limit(10);  {% endhighlight %}
+    К нашей задачи обработки почтовых индексов метод generate на первый взгляд подходит довольно хорошо.
+    Идея в том, чтобы Supplier вычитывал следующую запись, а по условию takeWhile(r -> r != null) поток завершился.
+    Так выглядит получившийся код, инициализация и обработка исключений опущены для краткости:
+    {% highlight java %}
+    return Stream.generate(() -> reader.nextRow())
+        .takeWhile(r -> r != null)
+        .map(postIndexRowMapper::map);
+    {% endhighlight %}
+    Простое выполнение данного кода происходит без ошибки и возвращает правильный результат.
+    Однако стоит добавить вызов функции .parallel(), как программа завершается с исключением:
+    {% highlight java %}
+    postIndexreaderImpl.readAllStreamHackingGenerate().toList(); //корректно
+    postIndexReaderImpl.readAllStreamHackingGenerate()
+        .parallel().toList(); //исключение
+    {% endhighlight %}
+    {% highlight text %}
+
+    com.linuxense.javadbf.DBFException
+    : com.linuxense.javadbf.DBFException
+        at java.base/jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance0(Native Method)
+        at java.base/jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance(NativeConstructorAccessorImpl.java:77)
+        at java.base/jdk.internal.reflect.DelegatingConstructorAccessorImpl.newInstance(DelegatingConstructorAccessorImpl.java:45)
+        at java.base/java.lang.reflect.Constructor.newInstanceWithCaller(Constructor.java:499)
+    ...
+    Caused by: java.io.EOFException
+        at java.base/java.io.DataInputStream.readFully(DataInputStream.java:203)
+        at java.base/java.io.DataInputStream.readFully(DataInputStream.java:172)
+        at com.linuxense.javadbf.DBFReader.getFieldValue(DBFReader.java:415)
+        at com.linuxense.javadbf.DBFReader.nextRecord(DBFReader.java:345)
+    ... 16 more
+    {% endhighlight %}
 </p>
 
+<p>
+    Фактическая причина ошибки и аварийного завершения программы в том, что Supplier, который передан в generate и условие завершения в
+    takeWhile не обязаны вызываться строго последовательно, не допуская ни единого "лишнего" вызова Supplier. При этом поведение библиотеки
+    предполагает, что после того как метод readRecord вернёт null, нужно завершить чтение данных, а при попытке будет выброшено исключение java.io.EOFException.
+    Запретить клиентам нашего интерфейса применить параллельный поток невозможно.
+    Кроме того, в будущих версиях JVM такой код может перестать работать и в последовательном (в противопоставление параллельному) режиме, если
+    разработчики применят какие-то оптимизации.
+</p>
 
+<p>
+    Принципиальная причина ошибки в том, что нарушен контракт использования метода Stream.generate(). Javadoc этого метода:
+    {% highlight java %}
+    @NotNull
+    @Contract("_->new")
+    public static <T> Stream<T> generate(
+        @NotNull java.util.function.Supplier<? extends T> s)   {% endhighlight %}
+    {% highlight text %}
+    Returns an infinite sequential unordered stream where each element is generated by the provided Supplier.
+    This is suitable for generating constant streams, streams of random elements, etc.
+    @Params:    s – the Supplier of generated elements
+    @Returns:    a new infinite sequential unordered Stream
+    {% endhighlight %}
+    Ключевое слово здесь - unordered, то есть неупорядоченный, мы не можем делать никаких предположений о порядке элементов.
+    Но это не очень понятно. Простой принцип, которым следует руководствоваться - использовать только потокобезопасные компоненты без состояния.
+    Это касается предикатов (параметров filter, takeWhile, dropWhile, anyMatch и других),
+    функций отображения (параметров map, flatMap), параметров, передаваемых в метод peek.
+    В противном случае нужно очень хорошо понимать внутреннее устройство потоков, чтобы не допустить скрытых ошибок.
+</p>
+
+<p>
+    Так или иначе, с помощью generate корректно и надёжно решить поставленную задачу не получилось, пробуем другие способы.
+</p>
+
+<p>
+    6. Получение потока из Iterator или Iterable. Между Iterator и Iterable разница минимальна и выбор зависит от того,
+    может ли наш класс порождать итераторы (как коллекция) или же это скорее одноразовая операция.
+    Главное назначение Iterable - использование в конструкции forEach. В случае когда нужен только итератор,
+    Iterable добавит несколько неиспользуемых строк кода и может кого-то запутать.
+</p>
+
+<p>
+    Реализуем логику получения почтовых индексов в виде итератора.
+    Только не будем сразу преобразовывать строки к доменным объектам, чтобы код можно было переиспользовать для чтения произвольных DBF файлов.
+    Благодаря потокам, такое преобразование легко можно будет осуществить после, добавлением вызова метод .map(...), не усложняя код итератора.
+
+    {% highlight java %}
+    public class DbfRowIterator implements Iterator<DBFRow> {
+        private final DBFReader reader;
+
+        boolean valueReady = false;
+        private DBFRow nextRow;
+
+        public DbfRowIterator(DBFReader reader) {
+            this.reader = reader;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (!valueReady) {
+                nextRow = reader.nextRow();
+                valueReady = true;
+            }
+
+            return nextRow != null;
+        }
+
+        @Override
+        public DBFRow next() {
+            if (!valueReady && !hasNext()) {
+                throw new NoSuchElementException();
+            } else {
+                valueReady = false;
+
+                DBFRow row = nextRow;
+                nextRow = null;
+                return row;
+            }
+        }
+    }  {% endhighlight %}
+    Итераторы разработчикам давно знакомы, поэтому не буду заострять внимание на его реализации. Отмечу лишь, что приходится вводить флаг valueReady
+    и вычитывать одну запись наперёд (nextRow) из-за того, что работа с файлами не предполагает идемпотентной (дающей тот же результат при многократном вызове)
+    проверки наличия данных во входном потоке (InputStream). Иными словами, в классе DBFReader, нет метода isMoreRowsAvailable().
+</p>
+
+<p>
+    Следующие шаги - это цепочка Iterator -> Spliterator -> Stream. На вопрос как преобразовать Iterator к Stream
+    <a href="https://stackoverflow.com/questions/24511052/how-to-convert-an-iterator-to-a-stream">cамый популярный ответ на Stackoverflow такой:</a>
+
+    {% highlight java %}
+    Iterator<String> sourceIterator = Arrays.asList("A", "B", "C").iterator();
+    Stream<String> targetStream = StreamSupport.stream(
+        Spliterators.spliteratorUnknownSize(sourceIterator, Spliterator.ORDERED), false);
+    {% endhighlight %}
+    Или
+    {% highlight java %}
+    Iterator<String> sourceIterator = Arrays.asList("A", "B", "C").iterator();
+    Stream<String> targetStream = StreamSupport.stream(
+        Spliterators.spliteratorUnknownSize(sourceIterator, Spliterator.ORDERED), false);
+    {% endhighlight %}
+    В общем, ответ верный в обоих случаях, но не хотелось бы каждый раз отправляться за ответом на Stackoverfow.
+</p>
+
+<p>
+    Вместо этого я предлагаю поступить чуть иначе - зная, что класс Iterable теперь предоставляет метод spliterator(), скопируем его код:
+    {% highlight java %}
+    default Spliterator<T> spliterator() {
+        return Spliterators.spliteratorUnknownSize(iterator(), 0);
+    }{% endhighlight %}
+    А имея Spliterator получить Stream можно используя один из методов утилитного класса StreamSupport.
+    В итоге получаем:
+    {% highlight java %}
+    public Stream<PostIndex> readAllStreamNaive() {
+        try (BufferedInputStream bis = new BufferedInputStream(Files.newInputStream(indexFilePath));
+            DBFReader reader = new DBFReader(bis)) {
+
+        Iterator<DBFRow> dbfRowIterator = new DbfRowIterator(reader);
+        return StreamSupport.stream(
+            Spliterators.spliteratorUnknownSize(dbfRowIterator, 0), false)
+                .map(postIndexRowMapper::map);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }{% endhighlight %}
+    Что же здесь происходит? Имея Iterator мы получаем Spliterator, но указываем, что никакой уточняющей информации об ограничениях,
+            накладываемых на элементы внутри Iterator у нас нет.
+    Можно было бы указать ORDERED или ORDERED | NONNULL | IMMUTABLE, но лучше сделать так же, как в Iterable и передать 0.
+    По крайней мере, пока нет глубокого понимания, что из себя представляют все эти флаги.
+    Создавая поток из Spliterator указываем параметр parallel = false. Это начальное значение флага, которое может быть изменено
+    позже вызовами методов .parallel() или .sequential().
+</p>
+
+<p>
+    Кстати, после первой же терминальной операции на результирующем потоке код падает с исключением:
+    {% highlight text %}
+    java.lang.IllegalArgumentException: this DBFReader is closed
+        at com.linuxense.javadbf.DBFReader.nextRecord(DBFReader.java:312)
+        at com.linuxense.javadbf.DBFReader.nextRow(DBFReader.java:404)
+        at com.hipravin.post.reader.dbf.DbfRowIterator.hasNext(DbfRowIterator.java:22)
+        at java.base/java.util.Iterator.forEachRemaining(Iterator.java:132)
+        at java.base/java.util.Spliterators$IteratorSpliterator.forEachRemaining(Spliterators.java:1845)
+        at java.base/java.util.stream.AbstractPipeline.copyInto(AbstractPipeline.java:509)
+        at java.base/java.util.stream.AbstractPipeline.wrapAndCopyInto(AbstractPipeline.java:499)
+        at java.base/java.util.stream.ReduceOps$ReduceOp.evaluateSequential(ReduceOps.java:921)
+        at java.base/java.util.stream.ReduceOps$5.evaluateSequential(ReduceOps.java:258)
+        at java.base/java.util.stream.ReduceOps$5.evaluateSequential(ReduceOps.java:248)
+        at java.base/java.util.stream.AbstractPipeline.evaluate(AbstractPipeline.java:234)
+        at java.base/java.util.stream.ReferencePipeline.count(ReferencePipeline.java:709)
+    {% endhighlight %}
+    Опытные "стримеры", наверное, уже уловили ошибку увидев блок try-with-resources из которого возвращается поток.
+    Я хотел показать, как работа с потоками так же, как и со списками, приводит к подобным ошибкам, чтобы акцентировать внимание на их особенностях.
+    Что же произошло? Одно из первых утверждений о потоках - разделение промежуточных и терминальных операций.
+    На готовом потоке можно указать только одну терминальную операцию (count, findFirst, anyMatch,
+    collect, forEach и т.д.). Но до тех пор, пока она не вызвана, добавление промежуточных операций не приводит к началу обработки элементов потока.
+    Проще говоря, ничего не происходит, пока не вызвана терминальная операция.
+</p>
+
+<p>
+    Чтобы терминальная операция выполнилась успешно, необходимо, чтобы источник элементов потока в момент её выполнения был доступен.
+    Когда поток получается из коллекции, достаточно, чтобы эта коллекция ещё была в памяти - это получается само собой
+    благодаря сборщику мусора, который корректно отслеживает ссылки на объекты и "знает", что объект потока ссылается на, например,
+    экземпляр ArrayList и не удалит его из кучи даже если других ссылок на этот экземпляр нет. Поток случайных чисел, получаемый
+    методом new Random().ints() также не может каким=то образом "устареть" и сломаться из-за того, что источник элементов больше не активен.
+</p>
+
+<p>
+    Другое дело - сетевые, файловые ресурсы, обработка ответов от базы данных - всё то, что надо открывать, а потом закрывать.
+    При создании потока мы открываем ресурс. В задаче почтовых индексов мы открываем файл на чтение, но закрыть его явно в блоке finally или неявно в try-with-resources
+    мы не можем, потому что данные понадобятся позже. Прочитать файл до конца, а потом закрыть тоже не получится, так как это противоречит изначальной задумке использования потоков.
+    Выход заключается в том, чтобы обязать клиента закрыть открытые ресурсы. Происходит это следующим образом:
+    <ol>
+        <li>
+            Одна из промежуточных операций при работе с потоками - onClose(Runnable closeHandler) позволяет добавить обработчик закрытия ресурсов после завершения работы с потоком.
+        </li>
+        <li>
+            Интерфейс Stream расширяет интрерфейс AutoCloseable, соответственно все обработчики из onClose будут вызвани при вызове close() на потоке.
+        </li>
+        <li>
+            Потоки, которые требуют освобождения ресурсов, необходимо использовать в блоке try-with-resources:
+            {% highlight java %}
+    try(Stream<PostIndex> postIndexStream = postIndexReader.readAll()) {
+        long postIndicesCount = postIndexStream.count();
+        assertEquals(58444, postIndicesCount);
+    }
+            {% endhighlight %}
+        </li>
+    </ol>
+    Важно понимать, что терминальные операции не приводят к вызову метода close(), что было бы логично на первый взгляд.
+    Но, во-первых, ресурсы нужно освобождать даже если поток остался невостребованным.
+    Во-вторых, в процессе обработки элементов потока может возникнуть исключение.
+</p>
+
+<p>
+    Окончательный вариант получения потока почтовых индексов, вычитанных из файла, используя итератор:
+    {% highlight java %}
+    public Stream<PostIndex> readAll() {
+        try {
+            BufferedInputStream bis = new BufferedInputStream(Files.newInputStream(indexFilePath));
+            DBFReader reader = new DBFReader(bis);
+
+            Iterator<DBFRow> dbfRowIterator = new DbfRowIterator(reader);
+            return StreamSupport.stream(
+                Spliterators.spliteratorUnknownSize(dbfRowIterator, 0), false)
+                    .map(postIndexRowMapper::map)
+                    .onClose(() -> closeQuietly(bis))
+                    .onClose(() -> closeQuietly(reader));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    {% endhighlight %}
+</p>
 
 <h3>Заключение</h3>
 <p>
@@ -333,8 +597,50 @@ metadescription:
 
 
 ============
+<p>
+    6*. Следующий способ - написать собственную реализацию Stream, включая методы filter, map, reduce, collect, findFirst и прочие.
+    Шучу такого способа не существует. Так поступают только разработчики библиотек, расширяющих функционал потоков, например, библиотеки
+    <a href="https://github.com/amaembo/streamex">StreamEx</a>.
+    Реализация потоков слишком сложная и скрыта для какого-либо расширения. Нет такого класса как,
+    например, AbstractList, чтобы унаследовать его и немного подправить поведение потоков под свои нужды, не реализуя весь функционал практически с нуля.
+    Но нам и не требуется никаких изменений в большинстве операций, нужно только описать источник элементов потока, который получает элементы их из файла и завершается,
+    когда встречает null.
+    Правильный способ - реализовать один из интерфейсов: Iterable, Iterator или Spliterator.
+</p>
 
-==============
+============
+
+Spliterator в свою очередь - это специальный итератор для потоков. Он позволяет управлять поведением параллельных потоков с помощью метода trySplit.
+Но чтобы эффективно использовать эти возможности должен существовать способ разделить генерируемый поток элементов на два приблизительно равных потока.
+А каждую из получившихся частей - ещё на два и так далее. Это хорошо срабатывает для коллекций известного размера наподобие ArrayList.
+Для задачи почтовых индексов мы не знаем количества записей в файле, а также не имеем способа как-то разделить эти записи на части до того, как достигнем конца файла.
+
+Если попытаться в подобном случае реализовать Spliterator, то метод trySplit придётся оставить с вводящей в заблуждение конструкцией return null:
+{% highlight java %}
+@Override
+public Spliterator<E> trySplit(){
+    //в отсутствии комментария выглядит как код, который генерирует IDE
+    //для того, чтобы класс скомпилировался
+    return null;
+    }
+    {% endhighlight %}
+    Для Spliterator также нужно реализовать метод, возвращающий количество элементов потока и какие-то характеристики:
+    {% highlight java %}
+    @Override
+    public long estimateSize(){
+    //и тут какая-то магическая константа
+    return Long.MAX_VALUE;
+    }
+    @Override
+    public int characteristics(){
+    //просто 0, очень осмысленно
+    return 0;
+    }
+    {% endhighlight %}
+
+
+
+    ==============
 https://www.oracle.com/technical-resources/articles/java/ma14-java-se-8-streams.html
 
 -3 Начать с примера autocomplete почтовых индексов
