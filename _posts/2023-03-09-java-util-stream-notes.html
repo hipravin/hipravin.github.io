@@ -141,10 +141,10 @@ metadescription:
     Стандартное решение данной задачи - загружать файл с индексами ежедневно в корпоративную базу данных, в которой индексы представлены отдельной таблицей, например, POST_INDEX.
     В этом случае выбор данных будет осуществляться простым запросом наподобие такого:
     {% highlight sql %}
-        select * from POST_INDEX
-            where index like '1017%'
-            order by index
-            limit 10 ;    {% endhighlight %}
+    select * from POST_INDEX
+        where index like '1017%'
+        order by index
+        limit 10 ;    {% endhighlight %}
     Базы данных очень хорошо оптимизированы, поэтому проблем с производительностью такого запроса не возникнет.
     Однако подходящей базы может не быть под рукой, она может быть уже перегружена и дорога в обслуживании.
     Кроме того, несмотря на быструю обработку запроса, все равно сетевое взаимодействие с базой данных вносит определённую задержку.
@@ -222,23 +222,23 @@ metadescription:
     public List<PostIndex> readAllList() {
         List<PostIndex> result = new ArrayList<>();
         try (BufferedInputStream bis = new BufferedInputStream(Files.newInputStream(indexFilePath));
-            DBFReader reader = new DBFReader(bis)) {//DBFReader - библиотечный класс
-            //Вспомогательный класс, инкапсулирующий формат файла (порядок полей и типы)
-            var postIndexFileStructure = PostIndexDbfFileStructure.fromReader(reader);
+            DBFReader reader = new DBFReader(bis)) {
 
-            Object[] rowObjects;
-            while ((rowObjects = reader.nextRecord()) != null) {
-                result.add(postIndexFileStructure.rawRecordToPostIndex(rowObjects));
+            DBFRow dbfRow;
+            while ((dbfRow = reader.nextRow()) != null) {
+                result.add(postIndexRowMapper.map(dbfRow));
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+
         return result;
     } {% endhighlight %}
-    Код достаточно прямолинейный - сначала открываем FileInputStream, обрабатываем заголовок.
-    Потом вычитываем записи, пока файл не будет обработан полностью, тогда reader.nextRecord() вернёт null.
+    Код достаточно прямолинейный - сначала открываем FileInputStream.
+    Потом вычитываем записи, пока файл не будет обработан полностью, тогда reader.nextRow() вернёт null.
     Каждую запись преобразуем к доменному объекту и добавляем в результирующий список.
     Все открытые ресурсы освобождаются автоматически при выходе из блока try-with-resources.
+    Библиотека для работы с DBF файлами самостоятельно обрабатывает заголовок файла, содержащий список имён полей и из типы.
 </p>
 <p>
     Должно быть несложно преобразовать такой код так, чтобы возвращаемым результатом стал поток. Или нет?
@@ -271,21 +271,22 @@ metadescription:
 </p>
 <p>
     3. Поток из фиксированного количества элементов можно создать также в помощью класса Stream.Builder:
+</p>
     {% highlight java %}
-
     Stream<String> someLetters = Stream.<String>builder()
         .add("a").add("b").add("c")
         .build();    {% endhighlight %}
+<p>
     или так:
+</p>
     {% highlight java %}
     Stream.Builder<String> builder = Stream.builder();
     builder.accept("a");
     builder.accept("b");
     builder.accept("c");
 
-    Stream<String> someLetters = builder.build();
-
-    {% endhighlight %}
+    Stream<String> someLetters = builder.build();    {% endhighlight %}
+<p>
     Такой способ может быть альтернативой созданию потока из ArrayList. Реализация Stream.Builder использует SpinedBuffer,
     который вместо одного большого массива, содержащего все элементы использует массив массивов.
     Такая реализация не требует непрерывной области памяти, в которую бы поместились все элементы,
@@ -306,7 +307,7 @@ metadescription:
 
     Кажется, что можно было бы как-то применить такой способ создания потока в нашей задаче,
         ведь мы в цикле повторяем определённую операцию до наступления заданного условия.
-    Но нам недостаточно отдельно взятого объекта (Object[] rowObjects) одновременно и для проверки конца итерации, и для получения следующего элемента.
+    Но нам недостаточно отдельно взятого объекта (DBFRow row) одновременно и для проверки конца итерации, и для получения следующего элемента.
 
     Поэтому если мы и сможем как-то воспользоваться методом Stream.iterate,
         то понадобится инкапсулировать всё необходимое в единый класс с функционалом наподобие итератора, а это уже совсем другой способ.
@@ -340,31 +341,35 @@ metadescription:
 <p>
     5. Метод Stream.generate(Supplier s) позволяет создать бесконечный поток, элементы которого - результат многократного вызова переданного
     Supplier. Ограничить такой поток можно при помощи функций limit или takeWhile. Например, сгенерируем десять случайных идентификаторов.
+</p>
     {% highlight java %}
     Stream<String> uuids = Stream.generate(() -> UUID.randomUUID().toString())
         .limit(10);  {% endhighlight %}
+<p>
     К нашей задачи обработки почтовых индексов метод generate на первый взгляд подходит довольно хорошо.
     Идея в том, чтобы Supplier вычитывал следующую запись, а по условию takeWhile(r -> r != null) поток завершился.
     Так выглядит получившийся код, инициализация и обработка исключений опущены для краткости:
+</p>
     {% highlight java %}
     return Stream.generate(() -> reader.nextRow())
         .takeWhile(r -> r != null)
-        .map(postIndexRowMapper::map);
-    {% endhighlight %}
+        .map(postIndexRowMapper::map);    {% endhighlight %}
+<p>
     Простое выполнение данного кода происходит без ошибки и возвращает правильный результат.
     Однако стоит добавить вызов функции .parallel(), как программа завершается с исключением:
+</p>
     {% highlight java %}
     postIndexreaderImpl.readAllStreamHackingGenerate().toList(); //корректно
     postIndexReaderImpl.readAllStreamHackingGenerate()
-        .parallel().toList(); //исключение
-    {% endhighlight %}
+        .parallel().toList(); //исключение    {% endhighlight %}
     {% highlight text %}
-
     com.linuxense.javadbf.DBFException
     : com.linuxense.javadbf.DBFException
         at java.base/jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance0(Native Method)
-        at java.base/jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance(NativeConstructorAccessorImpl.java:77)
-        at java.base/jdk.internal.reflect.DelegatingConstructorAccessorImpl.newInstance(DelegatingConstructorAccessorImpl.java:45)
+        at java.base/jdk.internal.reflect.NativeConstructorAccessorImpl
+                .newInstance(NativeConstructorAccessorImpl.java:77)
+        at java.base/jdk.internal.reflect.DelegatingConstructorAccessorImpl
+                .newInstance(DelegatingConstructorAccessorImpl.java:45)
         at java.base/java.lang.reflect.Constructor.newInstanceWithCaller(Constructor.java:499)
     ...
     Caused by: java.io.EOFException
@@ -372,14 +377,12 @@ metadescription:
         at java.base/java.io.DataInputStream.readFully(DataInputStream.java:172)
         at com.linuxense.javadbf.DBFReader.getFieldValue(DBFReader.java:415)
         at com.linuxense.javadbf.DBFReader.nextRecord(DBFReader.java:345)
-    ... 16 more
-    {% endhighlight %}
-</p>
+    ... 16 more    {% endhighlight %}
 
 <p>
     Фактическая причина ошибки и аварийного завершения программы в том, что Supplier, который передан в generate и условие завершения в
     takeWhile не обязаны вызываться строго последовательно, не допуская ни единого "лишнего" вызова Supplier. При этом поведение библиотеки
-    предполагает, что после того как метод readRecord вернёт null, нужно завершить чтение данных, а при попытке будет выброшено исключение java.io.EOFException.
+    предполагает, что после того как метод readRow вернёт null, нужно завершить чтение данных, а при попытке будет выброшено исключение java.io.EOFException.
     Запретить клиентам нашего интерфейса применить параллельный поток невозможно.
     Кроме того, в будущих версиях JVM такой код может перестать работать и в последовательном (в противопоставление параллельному) режиме, если
     разработчики применят какие-то оптимизации.
@@ -462,30 +465,35 @@ metadescription:
 
 <p>
     Следующие шаги - это цепочка Iterator -> Spliterator -> Stream. На вопрос как преобразовать Iterator к Stream
-    <a href="https://stackoverflow.com/questions/24511052/how-to-convert-an-iterator-to-a-stream">cамый популярный ответ на Stackoverflow такой:</a>
+    <a href="https://stackoverflow.com/questions/24511052/how-to-convert-an-iterator-to-a-stream">cамый популярный ответ на Stackoverflow</a>
+    предлагает два немного отличающихся решения:
 
+    <ol>
+        <li>
     {% highlight java %}
     Iterator<String> sourceIterator = Arrays.asList("A", "B", "C").iterator();
     Stream<String> targetStream = StreamSupport.stream(
-        Spliterators.spliteratorUnknownSize(sourceIterator, Spliterator.ORDERED), false);
-    {% endhighlight %}
-    Или
+        Spliterators.spliteratorUnknownSize(sourceIterator, Spliterator.ORDERED), false);  {% endhighlight %}
+
+        </li>
+        <li>
     {% highlight java %}
     Iterator<String> sourceIterator = Arrays.asList("A", "B", "C").iterator();
-    Stream<String> targetStream = StreamSupport.stream(
-        Spliterators.spliteratorUnknownSize(sourceIterator, Spliterator.ORDERED), false);
-    {% endhighlight %}
-    В общем, ответ верный в обоих случаях, но не хотелось бы каждый раз отправляться за ответом на Stackoverfow.
+    Iterable<String> iterable = () -> sourceIterator;
+    Stream<String> targetStream = StreamSupport.stream(iterable.spliterator(), false);  {% endhighlight %}
+        </li>
+    </ol>
+    Ответ верный в обоих случаях, но попробуем прийти к этому ответу самостоятельно.
+    Зная, что класс Iterable теперь предоставляет метод spliterator(), скопируем его код:
 </p>
-
-<p>
-    Вместо этого я предлагаю поступить чуть иначе - зная, что класс Iterable теперь предоставляет метод spliterator(), скопируем его код:
     {% highlight java %}
     default Spliterator<T> spliterator() {
         return Spliterators.spliteratorUnknownSize(iterator(), 0);
     }{% endhighlight %}
+<p>
     А имея Spliterator получить Stream можно используя один из методов утилитного класса StreamSupport.
     В итоге получаем:
+</p>
     {% highlight java %}
     public Stream<PostIndex> readAllStreamNaive() {
         try (BufferedInputStream bis = new BufferedInputStream(Files.newInputStream(indexFilePath));
@@ -499,6 +507,7 @@ metadescription:
             throw new UncheckedIOException(e);
         }
     }{% endhighlight %}
+<p>
     Что же здесь происходит? Имея Iterator мы получаем Spliterator, но указываем, что никакой уточняющей информации об ограничениях,
             накладываемых на элементы внутри Iterator у нас нет.
     Можно было бы указать ORDERED или ORDERED | NONNULL | IMMUTABLE, но лучше сделать так же, как в Iterable и передать 0.
@@ -537,7 +546,7 @@ metadescription:
     Когда поток получается из коллекции, достаточно, чтобы эта коллекция ещё была в памяти - это получается само собой
     благодаря сборщику мусора, который корректно отслеживает ссылки на объекты и "знает", что объект потока ссылается на, например,
     экземпляр ArrayList и не удалит его из кучи даже если других ссылок на этот экземпляр нет. Поток случайных чисел, получаемый
-    методом new Random().ints() также не может каким=то образом "устареть" и сломаться из-за того, что источник элементов больше не активен.
+    методом new Random().ints() также не может каким-то образом "устареть" и сломаться из-за того, что источник элементов больше не активен.
 </p>
 
 <p>
@@ -554,6 +563,7 @@ metadescription:
         </li>
         <li>
             Потоки, которые требуют освобождения ресурсов, необходимо использовать в блоке try-with-resources:
+
             {% highlight java %}
     try(Stream<PostIndex> postIndexStream = postIndexReader.readAll()) {
         long postIndicesCount = postIndexStream.count();
@@ -563,12 +573,13 @@ metadescription:
         </li>
     </ol>
     Важно понимать, что терминальные операции не приводят к вызову метода close(), что было бы логично на первый взгляд.
-    Но, во-первых, ресурсы нужно освобождать даже если поток остался невостребованным.
+    Но, во-первых, ресурсы нужно освобождать даже если поток останется невостребованным.
     Во-вторых, в процессе обработки элементов потока может возникнуть исключение.
 </p>
 
 <p>
     Окончательный вариант получения потока почтовых индексов, вычитанных из файла, используя итератор:
+</p>
     {% highlight java %}
     public Stream<PostIndex> readAll() {
         try {
@@ -585,9 +596,8 @@ metadescription:
             throw new UncheckedIOException(e);
         }
     }
-
     {% endhighlight %}
-</p>
+
 
 <h3>Заключение</h3>
 <p>
