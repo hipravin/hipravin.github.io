@@ -441,7 +441,6 @@ metadescription:
                 nextRow = reader.nextRow();
                 valueReady = true;
             }
-
             return nextRow != null;
         }
 
@@ -451,7 +450,6 @@ metadescription:
                 throw new NoSuchElementException();
             } else {
                 valueReady = false;
-
                 DBFRow row = nextRow;
                 nextRow = null;
                 return row;
@@ -595,9 +593,141 @@ metadescription:
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-    }
-    {% endhighlight %}
+    } {% endhighlight %}
+<p>
+    7. Непосредственно реализовать интерфейс Spliterator. Сразу приведу готовый код, чтобы можно было визуально сопоставить код Iterator и Spliterator.
+</p>
+    {% highlight java %}
+    public class DbfRowSpliterator implements Spliterator<DBFRow> {
+        private final DBFReader reader;
 
+        public DbfRowSpliterator(DBFReader reader) {
+            this.reader = reader;
+        }
+
+        @Override
+        public boolean tryAdvance(Consumer<? super DBFRow> action) {
+            DBFRow nextRow = reader.nextRow();
+            if (nextRow != null) {
+                action.accept(nextRow);
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public Spliterator<DBFRow> trySplit() {
+            return null;
+        }
+        @Override
+        public long estimateSize() {
+            return Long.MAX_VALUE;
+        }
+        @Override
+        public int characteristics() {
+            return 0;
+        }
+    }
+
+    public Stream<PostIndex> readAllStreamSpliterator() {
+        try {
+            BufferedInputStream bis = new BufferedInputStream(Files.newInputStream(indexFilePath));
+            DBFReader reader = new DBFReader(bis);
+
+            return StreamSupport.stream(new DbfRowSpliterator(reader), false)
+                .map(postIndexRowMapper::map)
+                .onClose(() -> closeQuietly(bis))
+                .onClose(() -> closeQuietly(reader));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }  {% endhighlight %}
+<p>
+    В интерфейсе Spliterator метод tryAdvance совмещает в себе пару hasNext/next из Iterator и его реализация в данном случае получается короче и понятней,
+    так как не требует введения дополнительных флагов и вычитывания следующей записи заранее.
+    Минус в том, что остальные методы выглядят так словно разработчик забыл о них и оставил заглушки.
+    Метод characteristics позволяет использовать более эффективные алгоритмы для выполнения отдельных операций с потоком,
+    указав в виде битовой маски, что все элементы потока заведомо:
+    <ol>
+        <li>DISTINCT - различны</li>
+        <li>SORTED - отсортированы</li>
+        <li>SIZED - количество элементов заранее известно</li>
+        <li>SUBSIZED - количество элементов заранее известно так же и после выполнения trySplit</li>
+        <li>NONNULL - все элементы отличны от null</li>
+        <li>IMMUTABLE - элементы не могут быть добавлены, удалены или заменены</li>
+        <li>CONCURRENT - элементы могут быть добавлены, изменены или удалены в процессе перебора элементов из источника</li>
+        <li>ORDERED - указывает, что для элементов определён порядок, которому следуют методы trySplit и forEachRemaining.</li>
+    </ol>
+    Это полный список характеристик, но не строгие определения, а только перевод с кратким комментарием.
+    Лучше не указать характеристику, чем указать ошибочно.
+    Например, если указать характеристику SIZED, не меняя больше никакого кода, то .count() вернёт Long.MAX_VALUE даже не пытаясь перебирать элементы.
+</p>
+
+<p>
+    Методы trySplit и estimateSize даже не вызываются, если поток не параллельный.
+    В итоге при реализации Spliterator, который функционально умеет то же, что и Iterator, существенное значение имеет только метод tryAdvance.
+</p>
+
+<h4>Использование потоков</h4>
+<p>
+    Пожалуй мы достаточно натерпелись пытаясь представить информацию о почтовых индексах в виде потока.
+    Теперь пришло время поработать готовым экземпляром потока и оценить преимущества по сравнению с другими способами работы с коллекциями.
+    Для начала преобразуем поток в коллекцию. Поток - он, так сказать, одноразовый. Поэтому периодически без преобразования к коллекции не обойтись.
+    Получается, как будто, бессмысленно - столько усилий потратить, чтобы вместо списка вернуть поток - и тут же преобразовать его обратно в список,
+    потому что данные будут нужны многократно. Одна из причин так поступить - архитектура приложения: компоненты разрабатываются независимо и подход
+    с потоками выбран как более гибкий, несмотря на то, что в другом компоненте на данный момент эта гибкость пока что не будет использоваться.
+    В любом случа получение коллекций из потока - одна из самых частых операций, поэтому посмотрим на типовые примеры:
+</p>
+
+<p>
+    1. Преобразование потока в список, три способа:
+</p>
+
+    {% highlight java %}
+    List<PostIndex> indices = indicesStream.collect(Collectors.toList());
+
+    ArrayList<PostIndex> indices = indicesStream.collect(
+                                       Collectors.toCollection(ArrayList::new));
+
+    List<PostIndex> indices = indicesStream.toList(); //since java 16 {% endhighlight %}
+<p>
+    В первом случае нет никаких гарантий о типе возвращаемого списка, хотя в текущей реализации всегда возвращается ArrayList.
+    Второй способ позволяет указать тип коллекции. Третий способ доступен начиная с версии Java 16 и является предпочтительным.
+    Во-первых, запись синтаксически короче. Во-вторых, в результирующем списке размер внутреннего массива равен количеству элементов (58444),
+    в то время в ArrayList в первых двух случаях размен внутреннего массива чуть больше: 71140 (так происходит ввиду определённых различий внутренней реализации,
+    которые трудно описать в двух словах).
+    В-третьих, список, возвращаемый методом toList(), является неизменяемым, что является хорошей практикой программирования в общем.
+    Если потребуется изменяемый список, то используем второй способ. Первый способ при этом самый распространённый, но IDE подсвечивает его применение,
+    предлагая заменить на toList().
+</p>
+
+
+<p>
+    2. Преобразование всего потока в множество:
+</p>
+    {% highlight java %}
+    Set<PostIndex> indicesSet = indicesStream.collect(Collectors.toSet());
+
+    Set<PostIndex> indicesSet = indicesStream.collect(
+                        Collectors.toCollection(HashSet::new));
+
+    SortedSet<PostIndex> indicesSet = indicesStream.collect(
+        Collectors.toCollection(() -> new TreeSet<>(PostIndex.BY_INDEX_THEN_OTHER_COMPARATOR)));
+
+    assertThrows(ClassCastException.class, () -> {
+        indicesStream.collect(
+            Collectors.toCollection(() -> new TreeSet<>()));
+    }); {% endhighlight %}
+
+<p>
+    Первый способ самый распространённый. Как и в случае со списком точный тип не специфицирован, но текущая реализация всегда использует HashSet.
+    Можно указать тип явно, как сделано во втором и третьем примере, но нужно быть аккуратным с TreeSet - в случае,
+    если Comparator не указан явно и тип элементов не реализует Comparable, то код компилируется, но падает с ClassCastException.
+    А вот метода toSet() (как и toMap()) наподобие toList() в классе Stream в текущей версии нет (Java 17).
+    Информацию почему можно найти <a href="https://bugs.openjdk.org/browse/JDK-8180352">в комментариях к соответствующему тикету JDK-8180352</a>.
+    Вкратце - toSet и toMap не вписываются в идеологию терминальных операций потока из-за того, что влекут за собой пост-обработку элементов.
+    Коллекторы - (Collector) более подходящее место.
+</p>
 
 <h3>Заключение</h3>
 <p>
