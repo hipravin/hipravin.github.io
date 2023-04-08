@@ -668,7 +668,7 @@ metadescription:
     В итоге при реализации Spliterator, который функционально умеет то же, что и Iterator, существенное значение имеет только метод tryAdvance.
 </p>
 
-<h4>Использование потоков</h4>
+<h4>Потоки и коллекции</h4>
 <p>
     Пожалуй мы достаточно натерпелись пытаясь представить информацию о почтовых индексах в виде потока.
     Теперь пришло время поработать готовым экземпляром потока и оценить преимущества по сравнению с другими способами работы с коллекциями.
@@ -680,7 +680,7 @@ metadescription:
 </p>
 
 <p>
-    1. Преобразование потока в список, три способа:
+    1. Преобразование потока в список (List), три способа:
 </p>
 
     {% highlight java %}
@@ -701,9 +701,8 @@ metadescription:
     предлагая заменить на toList().
 </p>
 
-
 <p>
-    2. Преобразование всего потока в множество:
+    2. Преобразование потока в множество (Set):
 </p>
     {% highlight java %}
     Set<PostIndex> indicesSet = indicesStream.collect(Collectors.toSet());
@@ -726,7 +725,205 @@ metadescription:
     А вот метода toSet() (как и toMap()) наподобие toList() в классе Stream в текущей версии нет (Java 17).
     Информацию почему можно найти <a href="https://bugs.openjdk.org/browse/JDK-8180352">в комментариях к соответствующему тикету JDK-8180352</a>.
     Вкратце - toSet и toMap не вписываются в идеологию терминальных операций потока из-за того, что влекут за собой пост-обработку элементов.
-    Коллекторы - (Collector) более подходящее место.
+    Коллекторы (Collector) - более подходящее место.
+</p>
+
+<p>
+    3. Преобразование потока в отображение (Map). Произвольный поток преобразовать к Map однозначным образом нельзя:
+    нужно указать, как получить ключ, как получить значение, что делать в случае повторяющихся ключей. Самое частое, что под этим подразумевают - это
+    выделение простого ключа (строка, число, дата или другой встроенный тип) и использование исходных объектов в виде значения.
+    Обычно неявно предполагают, что все ключи различны ввиду специфики данных.
+    Для почтовых индексов примером будет создание отображения с ключом шестизначного кода или имени (поля index и name).
+    Гарантий уникальности ключей у нас нет, хотя данные предполагают, что индексы уникальны. Имена же заведомо не уникальны.
+    Далее несколько примеров:
+</p>
+
+    {% highlight java %}
+    Map<String, PostIndex> indicesByIndex = indicesStream.collect(
+        Collectors.toMap(pi -> pi.index(), pi -> pi));
+
+    indicesStream.collect(
+        Collectors.toMap(pi -> pi.name(), pi -> pi)); //java.lang.IllegalStateException: Duplicate key
+
+    Map<String, PostIndex> indicesByName = indicesStream.collect(
+        Collectors.toMap(pi -> pi.name(), pi -> pi, (a, b) -> {
+            throw new IllegalStateException(
+                "Duplicate key %s (attempted merging values %s and %s)"
+                    .formatted(a.name(), a.toString(), b.toString()));
+        })); //поведение по умолчанию, указанное явно
+
+    Map<String, PostIndex> indicesByName = indicesStream.collect(
+        Collectors.toMap(pi -> pi.name(), pi -> pi, (a, b) -> a)); //сохраняем первое значение
+
+    Map<String, PostIndex> indicesByName = indicesStream.collect(
+        Collectors.toMap(pi -> pi.name(), pi -> pi, (a, b) -> b)); //сохраняем последнее значение
+    {% endhighlight %}
+<p>
+    На практике при использовании toMap всегда следует задуматься над качеством данных и поведением программы при обработке повторяющихся ключей.
+    Ошибки в данных или программе могут привести к повторению значений, которые уникальны по бизнес логике.
+    Один вариант, следуя поведению по умолчанию, остановить обработку данных с исключением.
+    Другой вариант - игнорировать повторяющиеся ключи, сохраняя первое или последнее значение.
+    Однако гарантий по поводу "первое" и "последнее" нет, в обоих случаях мы используем какое-то уиз двух.
+    Теоретически можно усложнить код и проверять совпадение значений при повторяющихся ключах и только если они отличаются выбрасывать ошибку,
+    но на практике я с таким не сталкивался.
+</p>
+
+<p>
+    Ещё две практические задачи, связанные с отображением - сгруппировать объекты по ключу или посчитать их количество.
+    Код короткий и понятный, без подводных камней:
+</p>
+    {% highlight java %}
+    Map<String, List<PostIndex>> groupedByRegion = indicesStream.collect(
+        Collectors.groupingBy(pi -> pi.region()));
+
+    Map<String, Long> countsByRegion = indicesStream
+        .map(PostIndex::region)
+        .collect(Collectors.toMap(r -> r, r -> 1L, Long::sum));    {% endhighlight %}
+
+<p>
+    В данном контексте вспоминается классическая задача с собеседований - вывести содержимое Map в порядке, отсортированном по значению.
+    Для нас аналогичную, но практически полезную задачу можно сформулировать так: найти пять регионов с самым большим количеством индексов.
+    И вместо создания и сортировки отдельного массива или упорядоченного отображения с необычным компаратором решим её с помощью потоков.
+    У меня получилось два варианта решения, которые отличаются в основном стилем написания кода:
+</p>
+    {% highlight java %}
+    //первый вариант
+    indicesStream
+        .map(PostIndex::region)
+        .collect(Collectors.toMap(r -> r, r -> 1L, Long::sum))
+        .entrySet().stream()
+        .sorted(Map.Entry.<String, Long>comparingByValue(Comparator.reverseOrder())
+            .thenComparing(Map.Entry::getKey))
+        .limit(5)
+        .forEach(e -> System.out.println(e.getKey() + " - " + e.getValue()));
+    {% endhighlight %}
+    {% highlight java %}
+    //второй вариант
+    record RegionAndCount(String region, Long count) {  }
+
+    Stream<RegionAndCount> regionAndCountStream = indicesStream
+        .map(PostIndex::region)
+        .collect(Collectors.toMap(r -> r, r -> 1L, Long::sum))
+        .entrySet().stream()
+        .map(e -> new RegionAndCount(e.getKey(), e.getValue()));
+
+    Comparator<RegionAndCount> byCountDescThenByRegionAsc =
+        Comparator.comparing(RegionAndCount::count, Comparator.reverseOrder())
+        .thenComparing(RegionAndCount::region);
+
+    List<RegionAndCount> regionsWithMostIndices = regionAndCountStream
+        .sorted(byCountDescThenByRegionAsc)
+        .limit(5)
+        .toList();
+
+    regionsWithMostIndices.forEach(rc -> System.out.println(rc.region + ": " + rc.count)); {% endhighlight %}
+<p>
+    Первый вариант в одну строчку привлекает своей краткостью, но я больше склоняюсь ко второму.
+    Он многословен, но более понятен и содержит контекст в виде имен промежуточных переменных, компараторов и использования специального класса вместо манипуляций с Map.Entry.
+    Это как комментарии, только лучше.
+    Кстати, объявление таких записей (record) с узкой областью определения непосредственно перед использованием является нормальной практикой и даже рекомендуется.
+    Важно при сортировке отображения по значению обрабатывать ситуацию, когда значения совпадают.
+    В данном случае если в двух регионах будет одинаковое количество индексов, то в первую очередь будет показан регион, значение которого лексикографически меньше.
+</p>
+
+<h4>Поиск почтовых индексов по префиксу</h4>
+<p>
+    Вернёмся к исходной задаче. Напомню, что требуется реализовать поиск почтовых индексов, начинающихся с заданной подстроки.
+    Это нужно, чтобы выдать короткий список подсказок для автозаполнения в соответствующем поле на сайте или в мобильном приложении.
+    Уже реализована загрузка данных по индексам, результат представлен в виде потока экземпляров доменного объекта PostIndex. Также принято решение, что
+    данные разумно хранить в памяти. И ещё мы рассмотрели основные способы получения разных коллекций из потока.
+    Для завершения решения осталось выбрать наиболее подходящий тип данных и реализовать непосредственно алгоритм поиска.
+</p>
+
+<p>
+    Неэффективные решения, работающие медленнее, чем O(logN) рассматривать не буду. Решение "в лоб" - использовать отсортированный список, найти бинарным поиском
+    позицию, на которой должен находиться префикс и пройти далее пока не превысим ограничение на длину результата или не встретим индекс, не удовлетворяющий префиксу.
+    Напомню, что индексы у нас представлены строками, а не числами, поэтому "122555" < "123" < "123001" в соответствии с лексикографическим порядком.
+    Ниже показан пример работы алгоритма. Значение "123" в отсортированном списке должно находиться перед "123001". Бинарный поиск находит эту позицию и нужно пройти дальше по списку,
+    добавить значения "123001", "123002", "123004" в результирующий список, а потом остановиться на значении "124005".
+    Ни одна строка, которая лексикографически больше "124005", не может начинаться с префикса "123".
+</p>
+    {% highlight text %}
+    ...
+    122555
+    123 <- префикс
+    123001
+    123002
+    123004
+    124005 <- стоп
+    125007
+    ...  {% endhighlight %}
+
+<p>
+    Реализация в императивном стиле:
+</p>
+    {% highlight java %}
+    @Override
+    public List<PostIndex> findByIndexStartingWith(String prefix, int limit) {
+        PostIndex stubPrefixPostIndex = new PostIndex(prefix, "", "", "", "", "", "");
+        int binarySearchResult = Collections.binarySearch(
+            indices, stubPrefixPostIndex, BY_INDEX_THEN_OTHER_COMPARATOR);
+        int fromPosition = binarySearchResult >= 0
+            ? binarySearchResult
+            : -(binarySearchResult + 1);
+
+        int toPositionExclusive = Math.min(indices.size(), fromPosition + limit);
+
+        List<PostIndex> result = new ArrayList<>();
+        for (int i = fromPosition;
+                (i < toPositionExclusive) && indices.get(i).index().startsWith(prefix); i++) {
+            result.add(indices.get(i));
+        }
+        return result;
+    } {% endhighlight %}
+<p>
+    Код выглядит довольно низкоуровневым, сложно сопоставить отдельные операции с бизнес логикой. Для начала приходится создавать несуществующий экземпляр
+    класса PostIndex, чтобы передать его в binarySearch. Потом нужно обработать результат бинарного поиска,
+    который может быть меньше нуля и равен (-(insertion point) - 1), если элемент не найден.
+    Также в цикле приходится использовать двойное условие, что тоже уменьшает читаемость кода.
+</p>
+
+<p>
+    Реализация становится значительно проще, если использовать более подходящую структуру данных - TreeMap
+    и работать с ней через интерфейс SortedMap. Ключом будет сам индекс, а значением - PostIndex.
+    Метод SortedMap.tailMap(prefix) почти в одиночку решает всю задачу, возвращая подмножество, начиная с элемента, ближайшего к prefix.
+    При этом новое отображение - это всего лишь "ссылка" (view), то есть копирования не происходит,
+    а значит не требуется ни дополнительной памяти, ни ресурсов процессора. Использование потоков, а именно методов takeWhile и limit решают оставшуюся часть задачи.
+</p>
+    {% highlight java %}
+    private final SortedMap<String, PostIndex> byIndex;
+    ...
+    public List<PostIndex> findByIndexStartingWithStreamImpl(String prefix, int limit) {
+        return byIndex.tailMap(prefix).values().stream()
+            .takeWhile(pi -> pi.index().startsWith(prefix))
+            .limit(limit)
+            .toList();
+    } {% endhighlight %}
+
+<p>
+    Код действительно лаконичный, декларативный и последовательный.
+    Можно утверждать, что это один из показательных примеров, как потоки улучшают код.
+    Код без потоков с использованием SortedMap лучше, чем через список, но всё равно выглядит немного коряво
+    из-за использования конструкции break:
+</p>
+    {% highlight java %}
+    public List<PostIndex> findByIndexStartingWithImperativeImpl(String prefix, int limit) {
+        List<PostIndex> result = new ArrayList<>();
+        Collection<PostIndex> tail = byIndex.tailMap(prefix).values();
+
+        for (PostIndex postIndex : tail) {
+            if (postIndex.index().startsWith(prefix) && result.size() < limit) {
+                result.add(postIndex);
+            } else {
+                break;
+            }
+        }
+       return result;
+    } {% endhighlight %}
+<p>
+    На этом решение задачи автозаполнения для почтовых индексов закончено.
+    Реализация соответствующего REST сервиса и клиентской части - тоже важная часть задачи,
+    но не имеет отношения к потокам и уж слишком перегрузит статью.
 </p>
 
 <h3>Заключение</h3>
