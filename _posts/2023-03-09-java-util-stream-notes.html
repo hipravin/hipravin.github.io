@@ -645,14 +645,14 @@ metadescription:
 <p>
     В интерфейсе Spliterator метод tryAdvance совмещает в себе пару hasNext/next из Iterator и его реализация в данном случае получается короче и понятней,
     так как не требует введения дополнительных флагов и вычитывания следующей записи заранее.
-    Минус в том, что остальные методы выглядят так словно разработчик забыл о них и оставил заглушки.
+    Минус в том, что остальные методы выглядят так, словно разработчик забыл о них и оставил заглушки.
     Метод characteristics позволяет использовать более эффективные алгоритмы для выполнения отдельных операций с потоком,
     указав в виде битовой маски, что все элементы потока заведомо:
     <ol>
         <li>DISTINCT - различны</li>
         <li>SORTED - отсортированы</li>
         <li>SIZED - количество элементов заранее известно</li>
-        <li>SUBSIZED - количество элементов заранее известно так же и после выполнения trySplit</li>
+        <li>SUBSIZED - количество элементов заранее известно также и после выполнения trySplit</li>
         <li>NONNULL - все элементы отличны от null</li>
         <li>IMMUTABLE - элементы не могут быть добавлены, удалены или заменены</li>
         <li>CONCURRENT - элементы могут быть добавлены, изменены или удалены в процессе перебора элементов из источника</li>
@@ -761,9 +761,9 @@ metadescription:
 <p>
     На практике при использовании toMap всегда следует задуматься над качеством данных и поведением программы при обработке повторяющихся ключей.
     Ошибки в данных или программе могут привести к повторению значений, которые уникальны по бизнес логике.
-    Один вариант, следуя поведению по умолчанию, остановить обработку данных с исключением.
-    Другой вариант - игнорировать повторяющиеся ключи, сохраняя первое или последнее значение.
-    Однако гарантий по поводу "первое" и "последнее" нет, в обоих случаях мы используем какое-то уиз двух.
+    Первый вариант - следуя поведению по умолчанию, остановить обработку данных с исключением.
+    Второй вариант - игнорировать повторяющиеся ключи, сохраняя первое или последнее значение.
+    Однако гарантий по поводу "первое" и "последнее" в общем случае нет, в обоих случаях мы используем какое-то из двух, считая что разницы нет.
     Теоретически можно усложнить код и проверять совпадение значений при повторяющихся ключах и только если они отличаются выбрасывать ошибку,
     но на практике я с таким не сталкивался.
 </p>
@@ -926,13 +926,235 @@ metadescription:
     но не имеет отношения к потокам и уж слишком перегрузит статью.
 </p>
 
+<span hidden="true">
+                </PostIndex>
+                </PostIndex>
+                </PostIndex>
+                </PostIndex>
+                </PostIndex>
+                </PostIndex>
+                </RegionAndCount>
+                </RegionAndCount>
+                </RegionAndCount>
+                </PostIndex>
+                </PostIndex>
+                </PostIndex>
+                </PostIndex>
+                </PostIndex>
+                </PostIndex>
+                </PostIndex>
+                </PostIndex>
+                </DBFRow>
+                </DBFRow>
+                </DBFRow>
+                </PostIndex>
+                </DBFRow>
+                </PostIndex>
+                </T>
+            </String>
+        </String>
+    </String>
+</String>
+</String>
+</span>
+
+<h4>Потоки и базы данных</h4>
+<p>
+    Потоки также могут быть полезны при обработке результатов запросов к базам данных.
+    Классы, которые раньше возвращали список элементов, получили аналогичные методы, возвращающие потоки.
+    Вот несколько примеров:
+</p>
+
+<ol>
+    <li>Spring JdbcTemplate. Добавлен метод queryForStream:</li>
+
+    {% highlight java %}
+    List<T> query(...);
+    Stream<T> queryForStream(...); {% endhighlight %}
+
+    <li>javax.persistence.TypedQuery. Добавлен метод getResultStream.
+        Реализация по умолчанию просто вызывает метод getResultList, но Hibernate честно реализует поведение потоков.
+        Если копнуть вглубь реализации, обнаружим такие классы как ScrollableResultsIterator и StreamDecorator. </li>
+
+    {% highlight java %}
+    List<X> getResultList();
+    Stream<X> getResultStream(); {% endhighlight %}
+    <li>Spring Data. Теперь методы, которые возвращали список теперь могут возвращать поток, даже без указания этого в имени или сигнатуре метода.
+        Примеры из <a href="https://docs.spring.io/spring-data/jpa/docs/current/reference/html/#repositories.limit-query-result">документации:</a></li>
+
+    {% highlight java %}
+    @Query("select u from User u")
+    Stream<User> findAllByCustomQueryAndStream();
+
+    Stream<User> readAllByFirstnameNotNull();
+
+    @Query("select u from User u")
+    Stream<User> streamAllPaged(Pageable pageable);{% endhighlight %}
+</ol>
+<p>
+    Когда результат запроса к базе данных представлен в виде потока следует учитывать несколько важных дополнений
+    по сравнению с привычным подходом, в котором результатом является список.
+    Во-первых, при работе с потоком требуется активная транзакция, а это требует переноса аннотации @Transactional на один уровень выше в иерархии вызовов.
+    Во-вторых, такие потоки требуют явного закрытия или применения конструкции try-with-resources, что заметно уменьшает читаемость кода.
+    Допустим, что у нас есть компонент-репозиторий и компонент-сервис, работающие с почтовыми индексами, которые на этот раз хранятся в базе данных.
+    Так выглядит код при работе со списками:
+</p>
+
+    {% highlight java %}
+    //PostIndexJpaRepository
+    @Query("select pi from PostIndexEntity pi where pi.index like :prefix% order by pi.index")
+    List<PostIndexEntity> findByIndexStartingWith(@Param("prefix") String prefix, Pageable pageable);
+
+    //PostServiceDbImpl
+    @Override
+    public List<PostIndexDto> searchIndexStartingWithListImpl(String indexPrefix, int limit) {
+        return postIndexJpaRepository.findByIndexStartingWith(indexPrefix, PageRequest.of(0, limit))
+            .stream()
+            .map(DtoMappers::fromEntity)
+            .toList();
+    } {% endhighlight %}
+<p>
+    При переходе на Stream код меняется следующим образом:
+</p>
+    {% highlight java %}
+    //PostIndexJpaRepository
+    @Query("select pi from PostIndexEntity pi where pi.index like :prefix% order by pi.index")
+    Stream<PostIndexEntity> findByIndexStartingWith(@Param("prefix") String prefix, Pageable pageable);
+
+    //PostServiceDbImpl
+    @Override
+    @Transactional //если забыть, то org.springframework.dao.InvalidDataAccessApiUsageException
+    public List<PostIndexDto> searchIndexStartingWith(String indexPrefix, int limit) {
+        try (Stream<PostIndexEntity> indexEntityStream =
+                postIndexJpaRepository.findByIndexStartingWith(indexPrefix, PageRequest.of(0, limit))) {
+            return indexEntityStream.map(DtoMappers::fromEntity)
+               .toList();
+        }
+    } {% endhighlight %}
+<p>
+    В отличие от предыдущих примеров, в которых потоки были призваны улучшить код, сделав его более гибким, понятным или кратким,
+    в данном случае имеет место только усложнение кода синтаксически и семантически, а также немотивированное увеличение времени жизни транзакции.
+    Теоретически на уровне сервиса могут собираться воедино ответы от разных баз данных и тогда простым добавлением @Transactional проблема бы не решилась.
+</p>
+
+<p>
+    При этом возможность улучшить производительность или снизить потребление памяти довольно сомнительна: паттерны использования баз данных предполагают,
+    что вся условная выборка и, может быть, сортировка результатов запросов происходит на стороне базы данных.
+    Кроме того, обычно количество записей в ответе мало - часто это одна запись или одна страница, ограниченная 10, 20, максимум 100 записями.
+    На мой взгляд для таких сценариев списки подходят намного лучше.
+</p>
+<p>
+    Возможно, что при обработке больших объёмов данных для каких-то аналитических
+    или фоновых задач можно применить потоки для ускорения обработки за счёт параллелизма.
+    Сейчас под рукой нет подобной задачи, чтобы проверить.
+</p>
+
+<h4>Потоки и освобождение ресурсов (Stream#close)</h4>
+<p>
+    В статье уже несколько раз в том или ином виде затрагивалась тема освобождения ресурсов после завершения работы с потоком.
+    В одном случае мы сами открывали файл на чтение, в другом - библиотека для работы с базой данных использовала соединение из пула, инициировала транзакцию и открытие курсора.
+    В обоих случаях мы имеем дело с каким-то внешним ресурсом, который в теории может быть сильно ограничен и если не задуматься о его корректном освобождении,
+    то непременно рано или поздно случится переполнение памяти, исключение или бесконечное ожидание.
+    Не столь болезненное проявление ошибок управления ресурсом - замедление работы программы или увеличение потребления памяти ввиду того,
+    что ресурс всё-таки освобождается, но происходит это позже чем нужно, например, во время очередного цикла сборки мусора.
+    Однако стоит признать, что зачастую проблематично воспроизвести проблему не удаётся: программа без явных вызовов close или блоков try-with-resources продолжает работать корректно и
+    пропускная способность меняется в пределах погрешности измерений.
+    Однако зная из опыта, как коварно и неожиданно может проявиться подобная проблема, я буду стоять на своём - внешними ресурсами нужно пользоваться корректно в любом случае.
+</p>
+
+<p>
+    Любой поток является экземпляром класса, реализующего интерфейс java.util.Stream, который расширяет интерфейс AutoCloseable.
+    Простой и привычной практикой было бы любые классы, реализующие Closeable или AutoCloseable использовать только в конструкции try-finally или try-with-resources.
+    Можно было бы настроить соответствующие подсказки от IDE или проверить код с помощью статического анализатора (например, Sonar),
+    чтобы убедиться, что все ресурсы используются корректно.
+    Но в реальности для потоков такой код был бы избыточным в большинстве случаев. Например, нужно в списке list найти самую длинную строку:
+</p>
+
+    {% highlight java %}
+    String longest = list.stream()
+        .max(comparing(String::length))
+        .orElse(null);   {% endhighlight %}
+<p>
+    То же самое, но следуя практике закрытия всех потоков без исключения:
+</p>
+    {% highlight java %}
+    String longest = null;
+    try (Stream<String> values = list.stream()) {
+        longest = values.max(comparing(String::length))
+            .orElse(null);
+    }  {% endhighlight %}
+<p>
+    Так никто не поступает, так не нужно поступать, и даже в документации класса AutoCloseable существует специальное указание:
+    "... However, when using facilities such as java.util.stream.Stream that support both I/O-based and non-I/O-based forms,
+    try-with-resources blocks are in general unnecessary when using non-I/O-based forms."
+    То есть, если потоки не работают с какой-то формой ввода-вывода (например, сеть или файловая система), то использование конструкции try-with-resources "в общем ненужно".
+    То есть точных и однозначных указаний как поступать в данном случае не существует.
+    Нужно на основании документации и общих представлений понять, что из себя представляет конкретный экземпляр потока и решить,
+    связан ли он с какими-то ресурсами, которые необходимо или желательно освободить.
+</p>
+
+<p>
+    В таком случае разработчики будут неизбежно игнорировать закрытие потоков, пока это не приводит к очевидным проблемам.
+    Существует надежда на IDE, но на момент написания статьи подсказки о необходимости использовать
+    try-with-resources для потоков в IDEA замечены только для Files.lines.
+</p>
+
+<p>
+    Почему бы просто не закрывать все ресурсы в момент выполнения терминальной операции на потоке?
+    Разработчики hibernate даже реализовали такое поведение с помощью класса-обёртки над потоком (StreamDecorator&lt;R&gt; implements Stream&lt;R&gt;).
+    Однако в его текущей реализации метод close будет вызван только при успешном выполнении терминальной операции.
+    В случае возникновения исключения, или если вообще не вызвать терминальную операцию, метод close не будет выполнен.
+    К слову, такой функционал в hibernate появился в версии 5.4, <a href="https://hibernate.atlassian.net/browse/HHH-13872">ссылка на тикет.</a>
+    Но поддержка спецификации JPA 2.2, в которой добавлен метод Query#getResultStream, началась с версии 5.3, и если сравнить графики выхода релизов, то получится, что три года
+    пользуясь библиотекой hibernate нужно было использовать конструкцию try-with-resources, а теперь как будто необязательно (хотя всё ещё нужно).
+    Существует также и практически официальный ответ от разработчиков Java на вопрос почему закрытие потоков не осуществляется в терминальных операциях автоматически.
+    <a href="https://stackoverflow.com/questions/28813637/why-doesnt-java-close-stream-after-a-terminal-operation-is-issued">https://stackoverflow.com/questions/28813637/why-doesnt-java-close-stream-after-a-terminal-operation-is-issued</a>
+    В общем, потоки, связанные с какими-то ресурсами, это очень редкий и специфический случай, который легко обрабатывается конструкцией try-with-resource.
+</p>
+
 <h3>Заключение</h3>
 <p>
     TODO:
 </p>
 
+=====
+Files.lines not closed
+    https://github.com/vitaliikrik/LabsSlovakia/blob/91de29f96dff7d04f3e5227e85dfd2ec02721d59/src/kry/edu/module4/FilesManagementTask.java
+    https://github.com/eliftehcproedu/Lambda/blob/31fc488a64af5055a96244b607df23b0ae1a3946/_1_Lambda/Stream_Ornekler/Steram06Files.java
+    https://github.com/pszczola4mk/algo/blob/989707a9cfa3ac5a9dd48b7755de73e1dc3280b4/src/main/test/pg/cui/spoj/MorganStringTests.java
+    https://github.com/cihanypc/lambda/blob/fbf11deffe2b22d04ad89e3647f67b4899eeb617/src/Lambda_06.java
+    https://github.com/Refik48/Lambda/blob/a7f89f73540da748f892107c723ab01880fd6541/src/streamOrnekler/Stream06Files.java
+    https://github.com/dbs-leipzig/gradoop/blob/23f8d5cb5f6ad5cbb6d1aa1cf329c959d6cc1782/gradoop-flink/src/main/java/org/gradoop/flink/model/impl/operators/matching/common/statistics/GraphStatisticsLocalFSReader.java
+    https://github.com/rdnc12/javaNotes/blob/a3c26b2ef23f884253fd07c0863203919d1608c5/day44lambda/L03.java
+    https://github.com/devsNsir/yaml-parser/blob/ae2161830b780eeaad4dcf2945d1467028fb8457/src/main/java/parser/yaml_parser/App.java
+    https://github.com/zihjiang/filling/blob/77c0328d21cd89a2a46fc39d5ad28a27752ac93b/filling-core/src/test/java/com/filling/calculation/plugin/base/flink/source/stream/KafkaTableStreamTest.java
+    https://github.com/AliciaGarciaGarcia/AdventOfCode2021/blob/fcf49ab72c9d9bf3788acee0a94ed8db6efc7aff/src/main/java/com/liferay/adventofcode2021/Day1.java
+    https://github.com/PathwayAndDataAnalysis/misc/blob/ef5ad31756629a732cf244bb706f419d4466eee7/src/main/java/org/panda/misc/analyses/SMMARTPatient204.java
+    https://github.com/Emine45/techpredsummer2020/blob/62ab4e1081e5c0481505b7c2e6888ce10189cba4/src/day32lambdant/L04.java
+                    https://github.com/imoyu/JavaBasic/blob/d873c5cc69bbafe89e43a59de0ad6b0fbbc055d6/SomeTest/src/main/java/day20200921/XTest.java
+                    https://github.com/nkorganci/winterjava/blob/8061d5667a830af23f4fd8819753325fc75324a6/src/day01vairables/day36lambda/L08_LambdaWithFiles.java
+                    https://github.com/amartinsierra/java_estandar/blob/f2fdafd32273a49abe9b6f6af0ed28f5eed4341b/22_programa_notas_fichero_nio_collect/src/service/NotasService.java
+                    Files.lines closed
+                    https://github.com/Maikody/michal-borla-kodilla-java/blob/8e189944d08ecc92114aacc92fc17fcc79535fc5/kodilla-exception/src/main/java/com/kodilla/exception/io/FileReader.java
 
+=====
+кто открывает ресурс, тот его и закрывает
 
+========
+https://hibernate.atlassian.net/browse/HHH-13872
+since 5.4 2021-12-16
+@Override
+public Optional<R> findFirst() {
+    Optional<R> result = delegate.findFirst();
+        close();
+        return result;
+}
+* The {@link StreamDecorator} wraps a Java {@link Stream} and registers a {@code closeHandler}
+* which is passed further to any resulting {@link Stream}.
+*
+* The goal of the {@link StreamDecorator} is to close the underlying {@link Stream} upon
+* calling a terminal operation.
+*
 ============
 <p>
     6*. Следующий способ - написать собственную реализацию Stream, включая методы filter, map, reduce, collect, findFirst и прочие.
@@ -1001,7 +1223,6 @@ https://www.pochta.ru/support/database/ops
 001 forEach forEachOrdered
 
 01 Оптимизация стрима - несколько filter, map в один - имеет ли смысл?
-
 
 1. Необходимость закрывать Stream
    Files.lines
