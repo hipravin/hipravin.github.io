@@ -4,6 +4,7 @@ title: Заметки о java.util.Stream
 excerpt: Практики и тонкости использования Stream, неполное руководство
 metadescription:
 ---
+<p><a href="https://github.com/hipravin/samples-java-util-stream">Код на Github</a>.</p>
 
 <p>
     Stream API (поток) - принципиально новый способ работы с коллекциями в Java.
@@ -1112,12 +1113,154 @@ metadescription:
     В общем, потоки, связанные с какими-то ресурсами, это очень редкий и специфический случай, который легко обрабатывается конструкцией try-with-resource.
 </p>
 
+<p>
+    Возможно, я сгущаю краски по поводу важности освобождения ресурсов при использовании потоков. Если в приложении существует сценарий,
+    когда выделяется соединение (Connection) с базой данных, но не закрывается, то оно не будет возвращено в пул никогда, и программа гарантированно перестанет работать со временем.
+    Также встречались сценарии, когда не закрытые экземпляры apache HttpClient приводили к тому, что сетевые запросы переставали отправляться.
+    Утечки памяти гарантированно приводят к переполнению памяти. Перезагрузки раз в неделю могут спасти, если проблема проявляется редко и не успевает исчерпать ресурс.
+    Со временем приходится переходить на ежедневные рестарты.
+</p>
+
+<p>
+    Но что касается примеров, перечисленных в статье, обнаружить очевидные ошибки мне не удалось. Я проверил многократное (10_000) выполнение запросов
+    в рамках одной транзакции, в разных транзакциях, с пулом соединений по умолчанию и с ограничением в одно соединение, но безрезультатно.
+    Вернее, результат в том, что вызов метода AbstractScrollableResults#close не критичен в условиях,
+    когда управление соединениями и транзакциями обеспечивается надёжными библиотеками.
+    То, что какие-то регистры, связанные с PreparedStatement и ResultSet, не очищаются сразу, не влечёт за собой немедленных ошибок, потому что ещё есть закрытие транзакции.
+</p>
+
+<h4>И всё-таки OutOfMemory!</h4>
+<p>
+    Пока я старательно сочинял оправдания неудачных экспериментов, я решил повторить попытку сломать программу тем же способом, но сильно ограничив доступную процессу память (-Xmx128m),
+    а также увеличив количество записей в одном запросе с десяти до ста.
+    В результате после 3000 итераций выполнение проограммы завершилось с ошибкой: java.lang.OutOfMemoryError: Java heap space.
+    На сайте есть <a href="https://hipravin.github.io/ooml/">статья про OutOfMemoryError</a>, если интересны детали исследования такой ошибки.
+    Если вкратце, то добавляем параметр VM "-XX:+HeapDumpOnOutOfMemoryError", запускаем Eclipse Memory Analyzer Tool и изучаем отчёт:
+</p>
+<img class="code-snapshot" src="/img/posts/streams/oom-pg-1.PNG"
+     alt="Leak suspect Eclipse MAT report"/>
+<p>
+    Видно, что большая часть памяти занята экземплярами класса «org.postgresql.jdbc.PgResultSet».
+    В репозитории с примерами за тест отвечает класс NoCloseOomInSingleTransactionTestingRunner.
+    Повторю ещё раз, что привело к ошибке:
+</p>
+<ol>
+    <li>
+        Результат выполнения запроса к базе представлен в виде потока.
+    {% highlight java %}
+    @Query("select pi from PostIndexEntity pi where pi.index like :prefix% order by pi.index")
+    Stream<PostIndexEntity> findByIndexStartingWith(@Param("prefix") String prefix, Pageable pageable);  {% endhighlight %}
+    </li>
+    <li>
+        В процессе обработки в рамках одной транзакции многократно выполняется запрос, но обработка потока завершается с исключением, которое игнорируется.
+        {% highlight java %}
+    @Transactional
+    public List<PostIndexEntity> searchTerminalNoCloseExceptionRepeated(String indexPrefix) {
+        for (int i = 0; i < 10_000; i++) {
+            try {
+                postIndexJpaRepository.findByIndexStartingWith(indexPrefix, PageRequest.of(0, 100))
+                    .peek(e -> {throw new RuntimeException("on purpose");})
+                    .toList();
+            } catch (RuntimeException e) { }
+        }
+        return List.of();
+    }{% endhighlight %}
+    </li>
+    <li>
+        Если добавить блок try-with-resources, то переполнение памяти не происходит.
+    {% highlight java %}
+    ...
+    try(Stream<PostIndexEntity> postIndexes =
+        postIndexJpaRepository.findByIndexStartingWith(indexPrefix, PageRequest.of(0, 100))) {
+    ...
+    {% endhighlight %}
+    </li>
+</ol>
+
+<p>
+    Такой сценарий довольно специфичен, но не так уж фантастичен. Допустим, существует унаследованная (legacy) база данных
+    из которой периодически фоновым процессом загружаются данные в новую систему.
+    Ввиду сложной доменной модели и сложившейся традиции, загрузка происходит большими транзакциями: так лучше обеспечивается консистентность данных в процессе обновления.
+    Часть данных низкого качества, типизация слабая. Например, в полях - перечислениях периодически появляются значения, которых там быть не должно. Либо они там есть давно и все к ним привыкли.
+    Такие данные приводят к исключениям в процессе обработки результатов запроса, которые игнорируются,
+    потому что требование к системе - загрузить как можно больше данных, а отдельные ошибки можно игнорировать.
+    Например, если в реестре индексов есть несколько явных опечаток, то это не повод останавливать систему, пока ошибки не будут исправлены.
+    Утечки памяти происходят постоянно, но только до завершения транзакции.
+    Переполнение памяти может возникнуть при увеличении объема базы либо при ухудшении качества данных.
+</p>
+
+<h4>Files.lines</h4>
+<p>
+    Не столь хитрый и сложный, но очень удобный добавленный вместе с потоками метод - Files.lines(path), который возвращает все строки текстового файла,
+    не загружая их в память одновременно. Сколько раз вы встречали подобный код?
+</p>
+    {% highlight java %}
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            ...    {% endhighlight %}
+<p>
+    Поиск на github комбинации while и readLine в категории Java выдаёт 4,227,711 совпадений. Теперь с использованием Files.lines весь этот код можно убрать
+    и оставить только само тело блока while, то есть логику работы со строками, убрав повторение очевидных шагов чтения строк, пока не встретим null.
+    Сравните решения задачи подсчёта количества не пустых строк в файле:
+</p>
+
+{% highlight java %}
+    public long countLines(Path path) {
+        try(BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+            long counter = 0;
+            String line;
+            while((line = reader.readLine()) != null) {
+                if(!line.isBlank()) {
+                    counter++;
+                }
+            }
+            return counter;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    } {% endhighlight %}
+    {% highlight java %}
+    @Override
+    public long countLines(Path path) {
+        try (Stream<String> lines = Files.lines(path, StandardCharsets.UTF_8)) {
+            return lines.filter(s -> !s.isBlank()).count();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+    //хотелось бы поступить вообще вот так, но нельзя:
+    @Override
+    public long countLines(Path path) throws IOException {
+        return Files.lines(path, StandardCharsets.UTF_8)
+            .filter(s -> !s.isBlank()).count();
+    } {% endhighlight %}
+<p>
+
+</p>
+
 <h3>Заключение</h3>
 <p>
     TODO:
 </p>
 
+<p><a href="https://github.com/hipravin/samples-java-util-stream">Код на Github</a>.</p>
+
 =====
+Benchmark                                       (fileName)   Mode  Cnt      Score      Error  Units
+BenchmarkConfig.benchBufferedReader        sample-tiny.txt  thrpt    5  15193,036 ± 4679,487  ops/s
+BenchmarkConfig.benchBufferedReader      sample-medium.txt  thrpt    5  12102,268 ± 1708,870  ops/s
+BenchmarkConfig.benchBufferedReader       sample-large.txt  thrpt    5    311,309 ±   49,055  ops/s
+BenchmarkConfig.benchFileLines             sample-tiny.txt  thrpt    5  17354,081 ± 3518,159  ops/s
+BenchmarkConfig.benchFileLines           sample-medium.txt  thrpt    5  12927,123 ± 3291,648  ops/s
+BenchmarkConfig.benchFileLines            sample-large.txt  thrpt    5    292,267 ±   44,443  ops/s
+BenchmarkConfig.benchReadAllLines          sample-tiny.txt  thrpt    5  15291,632 ± 2512,993  ops/s
+BenchmarkConfig.benchReadAllLines        sample-medium.txt  thrpt    5  11480,165 ± 1331,341  ops/s
+BenchmarkConfig.benchReadAllLines         sample-large.txt  thrpt    5    278,536 ±   16,527  ops/s
+BenchmarkConfig.benchWithoutProperClose    sample-tiny.txt  thrpt    5  10531,228 ± 1442,683  ops/s
+BenchmarkConfig.benchWithoutProperClose  sample-medium.txt  thrpt    5  11009,579 ± 1396,239  ops/s
+BenchmarkConfig.benchWithoutProperClose   sample-large.txt  thrpt    5    296,942 ±   17,888  ops/s
+=====
+
 Files.lines not closed
     https://github.com/vitaliikrik/LabsSlovakia/blob/91de29f96dff7d04f3e5227e85dfd2ec02721d59/src/kry/edu/module4/FilesManagementTask.java
     https://github.com/eliftehcproedu/Lambda/blob/31fc488a64af5055a96244b607df23b0ae1a3946/_1_Lambda/Stream_Ornekler/Steram06Files.java
