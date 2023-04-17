@@ -4,7 +4,7 @@ title: Заметки о java.util.Stream
 excerpt: Практики и тонкости использования Stream, неполное руководство
 metadescription:
 ---
-<p><a href="https://github.com/hipravin/samples-java-util-stream">Код на Github</a>.</p>
+<p><a href="https://github.com/hipravin/samples-java-util-stream">Код примеров на Github</a>.</p>
 
 <p>
     Stream API (поток) - принципиально новый способ работы с коллекциями в Java.
@@ -1195,9 +1195,9 @@ metadescription:
     не загружая их в память одновременно. Сколько раз вы встречали подобный код?
 </p>
     {% highlight java %}
-                        String line;
-                        while ((line = reader.readLine()) != null) {
-                            ...    {% endhighlight %}
+    String line;
+    while ((line = reader.readLine()) != null) {
+        ...    {% endhighlight %}
 <p>
     Поиск на github комбинации while и readLine в категории Java выдаёт 4,227,711 совпадений. Теперь с использованием Files.lines весь этот код можно убрать
     и оставить только само тело блока while, то есть логику работы со строками, убрав повторение очевидных шагов чтения строк, пока не встретим null.
@@ -1227,37 +1227,322 @@ metadescription:
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-    }
-    //хотелось бы поступить вообще вот так, но нельзя:
-    @Override
-    public long countLines(Path path) throws IOException {
-        return Files.lines(path, StandardCharsets.UTF_8)
-            .filter(s -> !s.isBlank()).count();
     } {% endhighlight %}
 <p>
-
+    Конечно, не менее удобно использовать метод Files.readAllLines, который заодно гарантирует освобождение файловых дескрипторов без необходимости явного использования блока try-with-resources.
+    Но если Files.lines можно использовать всегда, то для Files.readAllLines нужно всегда держать в голове потенциальный размер файла.
 </p>
 
+<p>
+    На Github очень много примеров вызова Files.lines без закрытия потока:
+    <ul>
+        <li><a href="https://github.com/vitaliikrik/LabsSlovakia/blob/91de29f96dff7d04f3e5227e85dfd2ec02721d59/src/kry/edu/module4/FilesManagementTask.java">https://github.com/vitaliikrik/LabsSlovakia/blob/91de29f96dff7d04f3e5227e85dfd2ec02721d59/src/kry/edu/module4/FilesManagementTask.java</a></li>
+        <li><a href="https://github.com/eliftehcproedu/Lambda/blob/31fc488a64af5055a96244b607df23b0ae1a3946/_1_Lambda/Stream_Ornekler/Steram06Files.java">https://github.com/eliftehcproedu/Lambda/blob/31fc488a64af5055a96244b607df23b0ae1a3946/_1_Lambda/Stream_Ornekler/Steram06Files.java</a></li>
+        <li><a href="https://github.com/pszczola4mk/algo/blob/989707a9cfa3ac5a9dd48b7755de73e1dc3280b4/src/main/test/pg/cui/spoj/MorganStringTests.java">https://github.com/pszczola4mk/algo/blob/989707a9cfa3ac5a9dd48b7755de73e1dc3280b4/src/main/test/pg/cui/spoj/MorganStringTests.java</a></li>
+        <li><a href="https://github.com/cihanypc/lambda/blob/fbf11deffe2b22d04ad89e3647f67b4899eeb617/src/Lambda_06.java">https://github.com/cihanypc/lambda/blob/fbf11deffe2b22d04ad89e3647f67b4899eeb617/src/Lambda_06.java</a></li>
+        <li><a href="https://github.com/dbs-leipzig/gradoop/blob/23f8d5cb5f6ad5cbb6d1aa1cf329c959d6cc1782/gradoop-flink/src/main/java/org/gradoop/flink/model/impl/operators/matching/common/statistics/GraphStatisticsLocalFSReader.java">https://github.com/dbs-leipzig/gradoop/blob/23f8d5cb5f6ad5cbb6d1aa1cf329c959d6cc1782/gradoop-flink/src/main/java/org/gradoop/flink/model/impl/operators/matching/common/statistics/GraphStatisticsLocalFSReader.java</a></li>
+    </ul>
+    Я пытался собрать какую-то статистику, но пролистав десять страниц поиска запросу "Files.lines", не нашёл ни одного блока try.
+    Это говорит о том, что учебники или курсы, по которым учатся люди, не акцентируют на этом внимание.
+    Напомню, что в данном случае о необходимости вызова close или использования блока try-with-resources говорит и документация метода, и IDEA, подсвечивая код как warning.
+</p>
+
+<p>
+    Согласно довольно старой <a href="https://www.javacodegeeks.com/2015/02/java-8-pitfall-beware-files-lines.html"> статье на javacodegeeks</a>,
+    неправильное использование Files.lines при большом количестве повторений (100_000 в примере) приводит к исчерпанию файловых дескрипторов и ошибке:
+    "Caused by: java.nio.file.FileSystemException: ...: Too many open files in system"
+    Самостоятельно на версии JRE 17.0.5 под управлением Windows 10 воспроизвести такую ошибку мне не удалось.
+    Возможно, это связано изменениями в JVM.
+    Взяв простую задачу подсчёта строк в файле и сравнив разные способы реализации, я достиг замедления работы программы приблизительно в полтора раза на очень коротких файлах (4 байта), если не закрывать поток.
+    С файлами даже 1кб разница производительности в пределах погрешности. В <a href="https://github.com/hipravin/samples-java-util-stream/tree/main/file-lines">репозитории</a>
+    за соответствующие эксперименты отвечает модуль file-lines. Для запуска тестов нужно выполнить класс BenchmarkRunner.
+    Тест также показывает, что производительность чтения файла с помощью Files.lines, BufferedReader и Files.readAllLines совпадает.
+</p>
+
+<h4>Накладные расходы и производительность</h4>
+<p>
+    Оптимизация приложений на Java обычно не является первостепенной задачей.
+    Код должен быть поддерживаемым, безопасным, разумно гибким, максимально точно соответствовать бизнес требованиям.
+    Оптимизацию, хоть это и спорный подход, откладывают на потом.
+    На практике достаточно использовать подходящие структуры данных и правильные алгоритмы,
+    не пытаясь сэкономить каждый возможный байт или такт процессора. При необходимости
+    существенно улучшить производительность применяются архитектурные решения: кэширование, репликация.
+</p>
+
+<p>
+    Тем не менее, если совсем не задумываться о производительности,
+    то за счёт "мелочей" можно получить пропускную способность, например, в два раза меньше возможной.
+    Например, использовать объекты там, где можно обойтись примитивами.
+    Использовать synchronized там, где можно обойтись без синхронизации или же использовать потокобезопасныю коллекцию, операцию CAS (Compare and Set).
+    Наиболее заметное влияние на производительность подобные нюансы оказывают при манипуляциях с числами, коллекциями,
+    массивами, но без запросов к внешним сервисам или базам данных.
+</p>
+<p>
+    Можно предположить, что старый добрый цикл for или while для алгоритмических задач будет быстрее,
+    а потоки привнесут заметные накладные расходы за счёт сложности внутренней реализации ReferencePipeline
+    и вероятного использования дополнительных вспомогательных объектов. Но так ли это?
+    Возьмём простейшую задачу - найти сумму чисел от 1 до 100 миллинов, без формул. Базовая производительность - простой цикл for с примитивами.
+    Оценим на сколько замедлится программа, если применить поток примитивов, поток объектов, цикл с BigInteger, операции flatMap, mapMulti, filter.
+    Можете сделать предположения перед тем, как смотреть результаты.
+</p>
+
+    {% highlight java %}
+    public static long sumPrimitiveStream(long sumToInclusive) {
+        return LongStream.rangeClosed(0, sumToInclusive).sum();
+    }
+
+    public static long sumBoxedStream(long sumToInclusive) {
+        return LongStream.rangeClosed(0, sumToInclusive).boxed()
+            .reduce(0L, Long::sum);
+    }
+
+    public static long sumPrimitiveCycle(long sumToInclusive) {
+        long sum = 0;
+        for (long l = 0; l <= sumToInclusive; l++) {
+            sum += l;
+        }
+        return sum;
+    }
+
+    public static long sumBoxedCycle(long sumToInclusive) {
+        Long sum = 0L;
+        for (Long l = 0L; l <= sumToInclusive; l++) {
+            sum += l;
+        }
+        return sum;
+    }
+
+    public static long sumPrimitiveFlatMap(long sumToInclusive) {
+        return LongStream.rangeClosed(0, sumToInclusive)
+            .flatMap(l -> LongStream.of(l)) //useless operation to measure flatmap overhead
+            .sum();
+    }
+
+    public static long sumPrimitiveMapMulti(long sumToInclusive) {
+        return LongStream.rangeClosed(0, sumToInclusive)
+            .mapMulti((l, c) -> c.accept(l)) //useless operation to measure mapmulti overhead
+            .sum();
+    }
+
+    public static long sumAtomicLong(long sumToInclusive) {
+        AtomicLong sum = new AtomicLong(0L);
+        for (long l = 0L; l <= sumToInclusive; l++) {
+            sum.addAndGet(l);
+        }
+        return sum.get();
+    }
+
+    public static long sumBigInteger(long sumToInclusive) {
+        BigInteger sum = BigInteger.ZERO;
+        for (long l = 0L; l <= sumToInclusive; l++) {
+            sum = sum.add(BigInteger.valueOf(l));
+        }
+        return sum.longValueExact();
+    }
+
+    public static long sumPrimitiveCycleWithIf(long sumToInclusive) {
+        long sum = 0;
+        for (long l = 0; l <= sumToInclusive; l++) {
+            if((l & 1) == 1) {
+                sum += l;
+            }
+        }
+        return sum;
+    }
+
+    public static long sumPrimitiveStreamWithFilter(long sumToInclusive) {
+        return LongStream.rangeClosed(0, sumToInclusive)
+            .filter(l -> (l & 1) == 1)
+            .sum();
+    } {% endhighlight %}
+
+<p>
+    Далее результаты запуска теста на домашнем ноутбуке. Отличия в пределах погрешности обсуждать не стоит, а вот
+    разница в 5-10 раз и более представляет определённый интерес. Если вы не работали с mapMulti, то это аналог flatMap,
+    который может быть в определённых сценариях удобнее синтаксически (хотя обычно сильно не удобнее),
+    а главное снижает накладные расходы при малом количестве элементов в flatMap-потоке. Появился в Java 16.
+</p>
+
+<table class="table-bordered">
+    <thead><th>Benchmark</th><th>Throughput (ops/s)</th><th>Error (+-ops/s)</th><th>Slowdown (times)</th></thead>
+    <tbody>
+    <tr><td>sumPrimitiveStream          </td>    <td>32,616</td>    <td>1,055</td><td>1</td> </tr>
+    <tr><td>sumPrimitiveCycle           </td>    <td>32,859</td>    <td>1,880</td><td>x1</td> </tr>
+    <tr><td>sumPrimitiveMapMulti        </td>    <td>32,177</td>    <td>4,770</td><td>x1</td> </tr>
+    <tr><td>sumAtomicLong               </td>    <td> 1,869</td>    <td>0,068</td><td>x17</td> </tr>
+    <tr><td>sumBoxedCycle               </td>    <td> 1,296</td>    <td>0,080</td><td>x25</td> </tr>
+    <tr><td>sumBoxedStream              </td>    <td> 0,879</td>    <td>0,162</td><td>x37</td> </tr>
+    <tr><td>sumPrimitiveFlatMap         </td>    <td> 0,736</td>    <td>0,024</td><td>x44</td> </tr>
+    <tr><td>sumBigInteger               </td>    <td> 0,360</td>    <td>0,083</td><td>x91</td> </tr>
+    <th>Последние два сценария сравниваются больше между собой, чем с остальными:</th>
+    <tr><td>sumPrimitiveStreamWithFilter</td>    <td>15,891</td>    <td>3,083</td><td>1</td> </tr>
+    <tr><td>sumPrimitiveCycleWithIf     </td>    <td>11,757</td>    <td>1,774</td><td>x1.3</td> </tr>
+    </tbody>
+</table>
+<p>
+    Результаты данного сравнения достаточно условны, потому что функции не являются строго равнозначными решениями одной и той же задачи.
+    Но всё же они развеивают опасения по поводу накладных расходов на использование потоков.
+    Потоки хорошо оптимизированы и не проигрывают простому циклу.
+    Выборка только нечётных чисел с помощью filter выполнилась даже немного быстрее, чем через if.
+    Если программа выполняет большое количество арифметических операций, опасаться стоит в первую очередь ненужного преобразования примитива к объекту (boxing).
+    Использовать BigInteger тоже не стоит повсеместно, только чтобы застраховаться от целочисленного переполнения, так как вычисления могут замедлиться на два порядка.
+    Также стоит аккуратно пользоваться flatMap, если исходный поток большого размера, а "подпоток", наоборот, состоит из пары элементов.
+    В этом случае можно воспользоваться нововведением Java 16 - методом Stream#mapMulti.
+    Для корпоративных приложений, манипулирующих сложными доменными объектами, накладные расходы от потоков по сравнению с императивным подходом если и есть, то незначительны.
+</p>
+
+<p>
+    Предлагаю немного отвлечься от теории и решить небольшую практическую задачу.
+    В этой статье таблица выше была получена из текстового вывода:
+    {% highlight text %}
+    BenchmarkConfig.bench_sumPrimitiveStream             thrpt    5  32,616 ± 1,055  ops/s
+    BenchmarkConfig.bench_sumAtomicLong                  thrpt    5   1,869 ± 0,068  ops/s
+    BenchmarkConfig.bench_sumBigInteger                  thrpt    5   0,360 ± 0,083  ops/s
+    BenchmarkConfig.bench_sumBoxedCycle                  thrpt    5   1,296 ± 0,080  ops/s
+    {% endhighlight %}
+</p>
+<p>
+    Предполагая, что входные данные являются одной строкой, напишите код, добавляющий теги tr и td, а также убирающий лишние столбцы.
+    Ожидаемый результат работы программы:
+</p>
+
+    {% highlight text %}
+    <tr><td>sumPrimitiveStream</td><td>32,616</td><td>1,055</td></tr>
+    <tr><td>sumAtomicLong</td><td> 1,869</td><td>0,068</td></tr>
+    <tr><td>sumBigInteger</td><td> 0,360</td><td>0,083</td></tr>
+    <tr><td>sumBoxedCycle</td><td> 1,296</td><td>0,080</td></tr>    {% endhighlight %}
+<p>
+    Далее решение, которое получилось у меня. Кажется разумнее часть логики перенести в отдельную функцию, без использования потоков и функционального стиля,
+    чем пытаться всё решение как-то уместить в одно монструозное выражение.
+</p>
+    {% highlight java %}
+    public static String toHtmlTableBody(String rawTextReport) {
+        Pattern reportLinePattern = Pattern.compile(
+            "^\\s*BenchmarkConfig.bench_(\\S+)\\s+thrpt\\s+\\d+\\s+(\\S+)\\s+±\\s+(\\S+)\\s+ops/s\\s*$");
+
+        return sampleReport.lines()
+            .map(line -> wrapGroups(line, reportLinePattern, "<td>", "</td>"))
+            .map(line -> "<tr>" + line + "</tr>")
+            .collect(Collectors.joining("\n"));
+    }
+
+    private static CharSequence wrapGroups(String text, Pattern pattern, String prepend, String append) {
+        StringBuilder result = new StringBuilder();
+
+        Matcher matcher = pattern.matcher(text);
+        if(!matcher.find()) {
+            return "";
+        }
+        for (int i = 1; i <= matcher.groupCount(); i++) {
+            result.append(prepend)
+                .append(matcher.group(i))
+                .append(append);
+        }
+        return result;
+    } {% endhighlight %}
+
+<h4>Лямбда-выражение или ссылка на метод?</h4>
+<p>
+    При использовании потоков через строчку приходится использовать простые предикаты или функции, которые можно сформулировать в двух почти идентичных формах:
+    в виде лямбда-выражения или в виде ссылки на метод:
+    {% highlight java %}
+    //лямбда-выражения
+    .filter(v -> v instanceof MyType)
+    .map(v -> (MyType) v)
+
+    //то же самое, но ссылки на метод
+    .filter(MyType.class::isInstance)
+    .map (MyType.class::cast) {% endhighlight %}
+    Так как же лучше? Семантическая разница минимальна, может проявиться в выводе типов, например при использовании Comparator.comparing(...).thenComparing(...).
+    В общем же это лишь вопрос синтаксиса и стиля - в каком случае код более выразителен и понятен.
+    Среда разработки, как минимум IDEA, настойчиво предлагает любые лямбда-выражения менять на ссылки на метод со следующим комментарием:
+    "While often it could be a matter of taste, method references are more clear and readable compared to lambdas."
+    То есть это может быть делом вкуса, но ссылки на метод лучше. Конечно, все эти проверки легко отключаются и настраиваются под личные предпочтения, но цель прямо противоположная -
+    выработать какой-то общий подход, которому будут следовать все. Как с форматированием кода, пробелами и отступами, конвенцией имен.
+    При этом написать лямбду намного проще, чем ссылку на метод. Можно всегда использовать лямбда-выражения, заменяя на ссылки средствами среды разработки.
+</p>
+<p>
+    Я предлагаю следовать совету, который даёт Джошуа Блох в книге "Java. Эффективное программирование": чаще всего
+    принимать предложение среды разработки заменить лямбда выражение ссылкой на метод,
+    но в отдельных случаях делать исключение, если лямбда-выражение более краткое.
+    Например, service.execute(() -> action()) и service.execute(GoshThisClassNamelsHumongous::action)
+    Или вместо Function.identity() использовать лямбда-эквивалент x -> x.
+</p>
+
+<h4></h4>
 <h3>Заключение</h3>
 <p>
     TODO:
 </p>
 
-<p><a href="https://github.com/hipravin/samples-java-util-stream">Код на Github</a>.</p>
+<p><a href="https://github.com/hipravin/samples-java-util-stream">Код примеров на Github</a>.</p>
+============
+                            <h4>Чего нет в Stream API</h4>
+                            <p>
+                                Периодически при использовании потоков напрашивается какая-то функциональность,
+                                которая кажется чрезвычайно полезной и очевидной, но по факту отсутствует.
+                                Существуют несколько библиотек, расширяющих возможности потоков, которые наверняка реализуют все подобные запросы,
+                                вопрос об обоснованности их использования оставлю в стороне.
+                                Несколько примеров, которые приходят в голову:
+                            </p>
+                            <ol>
+                                <li>
+                                    instanceof + map одним вызовом<br/>
+                                    {% highlight java %}
+                                    .filter(v -> v instanceof MyType)
+                                    .map(v -> (MyType) v)
+
+                                    .filter(MyType.class::isInstance)
+                                    .map (MyType.class::cast) {% endhighlight %}
+                                    После проверки на принадлежность элемента к какому-либо типу наверняка последует преобразование к этому типу.
+                                    Было бы удобно и красиво объединить два вызова в один, но такой возможности нет.
+                                </li>
+                                <li>
+                                    Нумерация элементов потока. <br/>
+                                    Допустим дан поток Stream&lt;String&gt;.
+                                    Как реализовать функцию наподобие forEachIndexed((index, value) -> {...})? Простого решения данной задачи не существует.
+                                    Можно ввести внешний счетчик AtomicLong и инкрементировать его в одной из промежуточных операций, но это точно не сработает для параллельных потоков,
+                                    а для последовательных сработает в текущей реализации, но в целом некрасиво и ненадёжно. Самое популярное решение, которое предложит Google по соответствующему запросу -
+                                    использовать какую-либо библиотеку: Guava, StreamEx и т.д.
+                                </li>
+                                <li>
+                                    Операция zip, склеивающая два потока. <br/>
+                                    В ранних релизах JDK 8 такой метод существовал, но потом был удалён.
+                                    Причина та же, почему в Java не добавляют классы наподобие Pair, Tuple и прочих:
+                                    такой код наполнится вызовами вроде getFirst(), getSecond(), что не имеет никакой связи с доменной моделью и бизнес логикой.
+                                    Впрочем, реализация метода zip - интересное упражнение. Мой вариант - в примерах в классе zip.Showcase.
+                                    На практике лучше решить задачу иначе, не вводя классов Pair, Tuple и операции zip.
+                                </li>
+                            </ol>
+
+===================
+                            Benchmark                                    Mode  Cnt   Score    Error  Units
+                            BenchmarkConfig.benchSumPrimitiveStream     thrpt    5  31,794 ±  3,902  ops/s
+                            BenchmarkConfig.bench_sumAtomicLong         thrpt    5   1,859 ±  0,130  ops/s
+                            BenchmarkConfig.bench_sumBigInteger         thrpt    5   0,371 ±  0,064  ops/s
+                            BenchmarkConfig.bench_sumBoxedCycle         thrpt    5   1,286 ±  0,262  ops/s
+                            BenchmarkConfig.bench_sumBoxedStream        thrpt    5   0,896 ±  0,162  ops/s
+                            BenchmarkConfig.bench_sumPrimitiveFlatMap   thrpt    5   0,712 ±  0,137  ops/s
+                            BenchmarkConfig.bench_sumPrimitiveMapMulti  thrpt    5  26,853 ± 22,471  ops/s
+                            BenchmarkConfig.bench_sumPrimitiveStream    thrpt    5  31,992 ±  5,263  ops/s
+
+                            Process finished with exit code 0
 
 =====
 Benchmark                                       (fileName)   Mode  Cnt      Score      Error  Units
 BenchmarkConfig.benchBufferedReader        sample-tiny.txt  thrpt    5  15193,036 ± 4679,487  ops/s
-BenchmarkConfig.benchBufferedReader      sample-medium.txt  thrpt    5  12102,268 ± 1708,870  ops/s
-BenchmarkConfig.benchBufferedReader       sample-large.txt  thrpt    5    311,309 ±   49,055  ops/s
 BenchmarkConfig.benchFileLines             sample-tiny.txt  thrpt    5  17354,081 ± 3518,159  ops/s
-BenchmarkConfig.benchFileLines           sample-medium.txt  thrpt    5  12927,123 ± 3291,648  ops/s
-BenchmarkConfig.benchFileLines            sample-large.txt  thrpt    5    292,267 ±   44,443  ops/s
 BenchmarkConfig.benchReadAllLines          sample-tiny.txt  thrpt    5  15291,632 ± 2512,993  ops/s
-BenchmarkConfig.benchReadAllLines        sample-medium.txt  thrpt    5  11480,165 ± 1331,341  ops/s
-BenchmarkConfig.benchReadAllLines         sample-large.txt  thrpt    5    278,536 ±   16,527  ops/s
 BenchmarkConfig.benchWithoutProperClose    sample-tiny.txt  thrpt    5  10531,228 ± 1442,683  ops/s
+
+BenchmarkConfig.benchBufferedReader      sample-medium.txt  thrpt    5  12102,268 ± 1708,870  ops/s
+BenchmarkConfig.benchFileLines           sample-medium.txt  thrpt    5  12927,123 ± 3291,648  ops/s
+BenchmarkConfig.benchReadAllLines        sample-medium.txt  thrpt    5  11480,165 ± 1331,341  ops/s
 BenchmarkConfig.benchWithoutProperClose  sample-medium.txt  thrpt    5  11009,579 ± 1396,239  ops/s
+
+BenchmarkConfig.benchBufferedReader       sample-large.txt  thrpt    5    311,309 ±   49,055  ops/s
+BenchmarkConfig.benchFileLines            sample-large.txt  thrpt    5    292,267 ±   44,443  ops/s
+BenchmarkConfig.benchReadAllLines         sample-large.txt  thrpt    5    278,536 ±   16,527  ops/s
 BenchmarkConfig.benchWithoutProperClose   sample-large.txt  thrpt    5    296,942 ±   17,888  ops/s
 =====
 
@@ -1280,157 +1565,16 @@ Files.lines not closed
                     Files.lines closed
                     https://github.com/Maikody/michal-borla-kodilla-java/blob/8e189944d08ecc92114aacc92fc17fcc79535fc5/kodilla-exception/src/main/java/com/kodilla/exception/io/FileReader.java
 
-=====
-кто открывает ресурс, тот его и закрывает
-
-========
-https://hibernate.atlassian.net/browse/HHH-13872
-since 5.4 2021-12-16
-@Override
-public Optional<R> findFirst() {
-    Optional<R> result = delegate.findFirst();
-        close();
-        return result;
-}
-* The {@link StreamDecorator} wraps a Java {@link Stream} and registers a {@code closeHandler}
-* which is passed further to any resulting {@link Stream}.
-*
-* The goal of the {@link StreamDecorator} is to close the underlying {@link Stream} upon
-* calling a terminal operation.
-*
-============
-<p>
-    6*. Следующий способ - написать собственную реализацию Stream, включая методы filter, map, reduce, collect, findFirst и прочие.
-    Шучу такого способа не существует. Так поступают только разработчики библиотек, расширяющих функционал потоков, например, библиотеки
-    <a href="https://github.com/amaembo/streamex">StreamEx</a>.
-    Реализация потоков слишком сложная и скрыта для какого-либо расширения. Нет такого класса как,
-    например, AbstractList, чтобы унаследовать его и немного подправить поведение потоков под свои нужды, не реализуя весь функционал практически с нуля.
-    Но нам и не требуется никаких изменений в большинстве операций, нужно только описать источник элементов потока, который получает элементы их из файла и завершается,
-    когда встречает null.
-    Правильный способ - реализовать один из интерфейсов: Iterable, Iterator или Spliterator.
-</p>
-
-============
-
-Spliterator в свою очередь - это специальный итератор для потоков. Он позволяет управлять поведением параллельных потоков с помощью метода trySplit.
-Но чтобы эффективно использовать эти возможности должен существовать способ разделить генерируемый поток элементов на два приблизительно равных потока.
-А каждую из получившихся частей - ещё на два и так далее. Это хорошо срабатывает для коллекций известного размера наподобие ArrayList.
-Для задачи почтовых индексов мы не знаем количества записей в файле, а также не имеем способа как-то разделить эти записи на части до того, как достигнем конца файла.
-
-Если попытаться в подобном случае реализовать Spliterator, то метод trySplit придётся оставить с вводящей в заблуждение конструкцией return null:
-{% highlight java %}
-@Override
-public Spliterator<E> trySplit(){
-    //в отсутствии комментария выглядит как код, который генерирует IDE
-    //для того, чтобы класс скомпилировался
-    return null;
-    }
-    {% endhighlight %}
-    Для Spliterator также нужно реализовать метод, возвращающий количество элементов потока и какие-то характеристики:
-    {% highlight java %}
-    @Override
-    public long estimateSize(){
-    //и тут какая-то магическая константа
-    return Long.MAX_VALUE;
-    }
-    @Override
-    public int characteristics(){
-    //просто 0, очень осмысленно
-    return 0;
-    }
-    {% endhighlight %}
-
-
 
     ==============
-https://www.oracle.com/technical-resources/articles/java/ma14-java-se-8-streams.html
-
--3 Начать с примера autocomplete почтовых индексов
-https://www.pochta.ru/support/database/ops
-
--2. Самый типовой и распространённый случай
-        stream
-        filter
-        filter
-        collect toList
 
 -1 Накладные расходы или насколько стримы медленные
 
 
 
-0. Полезные стримы:
-    SplittableRandom
-    FileWalk...?
-    Spring Data
-
-001 forEach forEachOrdered
-
-01 Оптимизация стрима - несколько filter, map в один - имеет ли смысл?
-
-1. Необходимость закрывать Stream
-   Files.lines
-
-    Какие ещё стримы надо закрывать
-    https://docs.spring.io/spring-data/jpa/docs/current/reference/html/
-    A Stream potentially wraps underlying data store-specific resources and must, therefore, be closed after usage. You can either manually close the Stream by using the close() method or by using a Java 7 try-with-resources block, as shown in the following example:
-
-JPA getResultStream
-hibernate-core 5.6.12-Final
-org.hibernate.internal.AbstractScrollableResults
-@Override
-public final void close() {
-if ( this.closed ) {
-// noop if already closed
-return;
-}
-
-// not absolutely necessary, but does help with aggressive release
-//session.getJDBCContext().getConnectionManager().closeQueryStatement( ps, resultSet );
-final JdbcCoordinator jdbcCoordinator = session.getJdbcCoordinator();
-jdbcCoordinator.getResourceRegistry().release( ps );
-jdbcCoordinator.afterStatementExecution();
-try {
-session.getPersistenceContextInternal().getLoadContexts().cleanup( resultSet );
-}
-catch (Throwable ignore) {
-// ignore this error for now
-if ( LOG.isTraceEnabled() ) {
-LOG.tracev( "Exception trying to cleanup load context : {0}", ignore.getMessage() );
-}
-}
-
-this.closed = true;
-}
-
-
-2. Spring data returning Stream - transaction
-
-3. Стримы изнутри - Reference Pipeline ?
-
 5. Параллельные вычисления, ordering /sorting
 https://developer.ibm.com/articles/j-java-streams-3-brian-goetz/#eo
 If the stream does have an encounter order, most stream operations must respect that order. For sequential executions, preserving encounter order is essentially free, because elements are naturally processed in the order in which they're encountered. Even in parallel, for many operations (stateless intermediate operations and certain terminal operations such as reduce()), respecting the encounter order doesn't impose any real costs. But for others (stateful intermediate operations, and terminal operations whose semantics are tied to encounter order, such as findFirst() or forEachOrdered()), the obligation to respect the encounter order in a parallel execution can be significant. If the stream has a defined encounter order, but that order isn't significant to the result, it might be possible to speed up parallel execution of pipelines containing order-sensitive operations by removing the ORDERED flag with the unordered() operation.
-
-6. Создание своих стримов
-    -из итератора
-    -трай адванс
-
-7. Сравнение кода со стримами и без
-
-8. Много стандартных примеров
-
-9 Промежуточные limit ?
-
-10. firstMatch vs anyMatch
-
-11. toMap without merge strategy
-
-12. IntStream и прочие там где можно вместо операций с объектами, производительность
-
-13. mapMulti examples and performance
-        (words - letters)
-
-статистика букв в словах длиннее трёх букв
 
 14 zip
 https://dzone.com/articles/bridge-the-gap-of-zip-operation
@@ -1439,21 +1583,8 @@ https://dzone.com/articles/bridge-the-gap-of-zip-operation
 
 16 teeing
 
-17 переход на стримы внутри проекта в качестве возвращаемого значения
-
-18 toList , Collectors.toList
-
-19 iterate and parallel
-Stream<Long> literate = Stream.iterate(1L, l -> l + 1)
-    .limit(100)
-    .peek(l -> System.out.println(Thread.currentThread().getName() + " - " + l + " peek"))
-    .limit(50)
-    .sorted()
-    .parallel(); //batch (1024), ArrayListSpliterator
-
 20 аргумент конструктора лучше limit
 
-21 Iterable.spliterator вместо стековерфлоу
 
 ====
 To summarize what we’ve learned so far, working with streams, in general, involves three things:
