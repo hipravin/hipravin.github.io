@@ -347,7 +347,7 @@ metadescription:
     Stream<String> uuids = Stream.generate(() -> UUID.randomUUID().toString())
         .limit(10);  {% endhighlight %}
 <p>
-    К нашей задачи обработки почтовых индексов метод generate на первый взгляд подходит довольно хорошо.
+    К нашей задаче обработки почтовых индексов метод generate на первый взгляд подходит довольно хорошо.
     Идея в том, чтобы Supplier вычитывал следующую запись, а по условию takeWhile(r -> r != null) поток завершился.
     Так выглядит получившийся код, инициализация и обработка исключений опущены для краткости:
 </p>
@@ -927,38 +927,6 @@ metadescription:
     но не имеет отношения к потокам и уж слишком перегрузит статью.
 </p>
 
-<span hidden="true">
-                </PostIndex>
-                </PostIndex>
-                </PostIndex>
-                </PostIndex>
-                </PostIndex>
-                </PostIndex>
-                </RegionAndCount>
-                </RegionAndCount>
-                </RegionAndCount>
-                </PostIndex>
-                </PostIndex>
-                </PostIndex>
-                </PostIndex>
-                </PostIndex>
-                </PostIndex>
-                </PostIndex>
-                </PostIndex>
-                </DBFRow>
-                </DBFRow>
-                </DBFRow>
-                </PostIndex>
-                </DBFRow>
-                </PostIndex>
-                </T>
-            </String>
-        </String>
-    </String>
-</String>
-</String>
-</span>
-
 <h4>Потоки и базы данных</h4>
 <p>
     Потоки также могут быть полезны при обработке результатов запросов к базам данных.
@@ -1408,9 +1376,9 @@ metadescription:
 
     {% highlight text %}
     <tr><td>sumPrimitiveStream</td><td>32,616</td><td>1,055</td></tr>
-    <tr><td>sumAtomicLong</td><td> 1,869</td><td>0,068</td></tr>
-    <tr><td>sumBigInteger</td><td> 0,360</td><td>0,083</td></tr>
-    <tr><td>sumBoxedCycle</td><td> 1,296</td><td>0,080</td></tr>    {% endhighlight %}
+    <tr><td>sumAtomicLong</td><td>1,869</td><td>0,068</td></tr>
+    <tr><td>sumBigInteger</td><td>0,360</td><td>0,083</td></tr>
+    <tr><td>sumBoxedCycle</td><td>1,296</td><td>0,080</td></tr>    {% endhighlight %}
 <p>
     Далее решение, которое получилось у меня. Кажется разумнее часть логики перенести в отдельную функцию, без использования потоков и функционального стиля,
     чем пытаться всё решение как-то уместить в одно монструозное выражение.
@@ -1469,153 +1437,95 @@ metadescription:
     Или вместо Function.identity() использовать лямбда-эквивалент x -> x.
 </p>
 
-<h4></h4>
+<h4>Параллельные потоки</h4>
+<p>
+    Читая статьи различных авторов, прихожу к единственному на сто процентов рабочему совету по поводу параллельных потоков: не используйте их.
+    Не столь категоричное заявление звучит так: даже не пытайтесь применять параллельные потоки, пока не обладаете уверенностью в том,
+    что это принесёт пользу во всех сценариях, в первую очередь в условиях эксплуатационной нагрузки (продуктив),
+    но главное не приведёт к ошибкам и сохранит корректное поведение программы.
+</p>
+<p>
+    Переключить потоки на параллельное исполнение исключительно просто: либо добавить вызов .parallel(), либо вместо .stream() использовать .parallelStream(),
+    если источником является коллекция. Лучший результат, которого можно добиться таким образом - увеличение производительности кратно количеству ядер процессора.
+    Столь удачно обстоятельства складываются редко, хотя при написании кода, как правило, от параллелизма ожидается ускорение хотя бы в два раза.
+    С практической точки зрения выигрыш даже десяти процентов за счёт одной строчки кода выглядит очень привлекательно.
+</p>
+
+<p>
+    Каким образом поток распределяет вычисления по разным нитям исполнения? Сердце параллелизма - операция Spliterator#trySplit(), которая должна поделить Spilterator пополам.
+    Если это невозможно, то разделить нужно максимально равнозначно. Исходный поток делится на две части,
+    потом каждая часть делится снова и в какой-то момент вычисление переходит на последовательную обработку в одной из нитей встроенного ForkJoinPool.
+    Момент, на котором деление останавливается, определяется эвристически:
+</p>
+    {% highlight java %}
+    //java.util.stream.AbstractTask
+    //на моей машине LEAF_TARGET = 28
+    private static final int LEAF_TARGET = ForkJoinPool.getCommonPoolParallelism() << 2;
+
+    public static long suggestTargetSize(long sizeEstimate) {
+        long est = sizeEstimate / getLeafTarget(); //1024 / 28 = 36
+        return est > 0L ? est : 1L;
+    }
+    ...
+    //AbstractTask.compute
+    long sizeThreshold = getTargetSize(sizeEstimate);
+    ...
+    while (sizeEstimate > sizeThreshold && (ls = rs.trySplit()) != null) {
+        ...
+        task.leftChild  = leftChild = task.makeChild(ls);
+        task.rightChild = rightChild = task.makeChild(rs);
+        ... {% endhighlight %}
+
+<p>
+    То есть деление не происходит до тех пор, пока trySplit не вернёт null.
+    Поток из 1024 элементов по факту обрабатывается частями по 36 элементов.
+    Эти детали реализации и параметры эвристик не находятся под контролем разработчика, но они нужны для понимания.
+    Понимания того факта, что следует довериться JVM и его магии, либо отказаться от параллельных потоков.
+</p>
+<p>
+    Проверим, что получится, если добавить .parallel() в какие-нибудь примеры. В качестве подопытных кроликов выступят различные способы сложения
+    целых чисел, которые мы сравнивали чуть ранее с целью изучения возможных накладных расходов потоков. Результат вычисления верный, программа отработала корректно во
+    всех случаях. Поэтому остаётся оценить прирост производительности.
+</p>
+
+<table class="table-bordered">
+    <thead><th>Benchmark</th><th>Throughput (ops/s)</th><th>Error (+-ops/s)</th><th>Throughput gain (times)</th></thead>
+    <tbody>
+    <th>Сумма примитивов</th>
+    <tr><td>rangeClosed(0, sumToInclusive).sum()         </td>  <td>  31,991</td> <td>  4,831</td> <td>1</td></tr>
+    <tr><td>rangeClosed(0, sumToInclusive).parallel().sum() </td>  <td> 136,491</td> <td> 36,017</td> <td>x4.26</td></tr>
+    <th>Сумма объектов</th>
+    <tr><td>...boxed().reduce(0L, Long::sum)             </td>  <td>   0,946</td> <td>  0,048</td> <td>1</td></tr>
+    <tr><td>...boxed().parallel().reduce(0L, Long::sum)           </td>  <td>   1,427</td> <td>  0,179</td> <td>x1.5</td></tr>
+    <th>Сумма примитивов с лишним flatMap внутри</th>
+    <tr><td>...flatMap(l -> LongStream.of(l)).sum()        </td>  <td>   0,735</td> <td>  0,055</td> <td>1</td></tr>
+    <tr><td>...flatMap(l -> LongStream.of(l)).parallel().sum()</td>  <td>   0,796</td> <td>  0,030</td> <td>x1.08</td></tr>
+    </tbody>
+</table>
+
+<p>
+    Три эксперимента и три совершенно разных результата: увеличение в 4 раза (4 ядра),
+    увеличение в полтора раза и незначительное улучшение в пределах погрешности.
+    Такое поведение намекает на один из способов использования параллельных потоков - попробовать,
+    измерить и оставить или вернуть как было в зависимости от результата.
+    Положительный результат не гарантирован, потому что измерение на машине разработчика и тестовых данных может
+    дать диаметрально противоположные результаты в сравнении с показателями под эксплуатационной нагрузкой в продуктиве.
+</p>
+<p>
+    Я пока оставлю без точного объяснения результаты этого эксперимента. Возможно, метод trySplit делит поток слишком неравномерно,
+    возможно flatMap сбрасывает характеристики SIZED/SUBSIZED и внутренние оптимизации перестают работать.
+    Может быть, затраты на объединение результатов из отдельных потоков (thread) сводят на нет весь выигрыш от использования всех ядер процессора.
+    Если есть возможность или необходимость углубляться в детали поведения многопоточного приложения, то не надёжнее ли воспользоваться
+    инструментами из пакета java.util.concurrent?
+</p>
+
 <h3>Заключение</h3>
 <p>
-    TODO:
+    В данной статье мы прошлись "галопом по потокам", сравнив отдельные примеры их использования
+    как со стороны поставщика данных, так и со стороны потребителя.
+    Изучили сценарии работы с потоками, связанными с внешними ресурсами,
+    такими как файлы или базы данных и те проблемы, которые возникают, если игнорировать закрытие потоков.
+    Буквально одним глазком взглянули на параллельные потоки, оценили как пользу так и риски их использования.
 </p>
 
 <p><a href="https://github.com/hipravin/samples-java-util-stream">Код примеров на Github</a>.</p>
-============
-                            <h4>Чего нет в Stream API</h4>
-                            <p>
-                                Периодически при использовании потоков напрашивается какая-то функциональность,
-                                которая кажется чрезвычайно полезной и очевидной, но по факту отсутствует.
-                                Существуют несколько библиотек, расширяющих возможности потоков, которые наверняка реализуют все подобные запросы,
-                                вопрос об обоснованности их использования оставлю в стороне.
-                                Несколько примеров, которые приходят в голову:
-                            </p>
-                            <ol>
-                                <li>
-                                    instanceof + map одним вызовом<br/>
-                                    {% highlight java %}
-                                    .filter(v -> v instanceof MyType)
-                                    .map(v -> (MyType) v)
-
-                                    .filter(MyType.class::isInstance)
-                                    .map (MyType.class::cast) {% endhighlight %}
-                                    После проверки на принадлежность элемента к какому-либо типу наверняка последует преобразование к этому типу.
-                                    Было бы удобно и красиво объединить два вызова в один, но такой возможности нет.
-                                </li>
-                                <li>
-                                    Нумерация элементов потока. <br/>
-                                    Допустим дан поток Stream&lt;String&gt;.
-                                    Как реализовать функцию наподобие forEachIndexed((index, value) -> {...})? Простого решения данной задачи не существует.
-                                    Можно ввести внешний счетчик AtomicLong и инкрементировать его в одной из промежуточных операций, но это точно не сработает для параллельных потоков,
-                                    а для последовательных сработает в текущей реализации, но в целом некрасиво и ненадёжно. Самое популярное решение, которое предложит Google по соответствующему запросу -
-                                    использовать какую-либо библиотеку: Guava, StreamEx и т.д.
-                                </li>
-                                <li>
-                                    Операция zip, склеивающая два потока. <br/>
-                                    В ранних релизах JDK 8 такой метод существовал, но потом был удалён.
-                                    Причина та же, почему в Java не добавляют классы наподобие Pair, Tuple и прочих:
-                                    такой код наполнится вызовами вроде getFirst(), getSecond(), что не имеет никакой связи с доменной моделью и бизнес логикой.
-                                    Впрочем, реализация метода zip - интересное упражнение. Мой вариант - в примерах в классе zip.Showcase.
-                                    На практике лучше решить задачу иначе, не вводя классов Pair, Tuple и операции zip.
-                                </li>
-                            </ol>
-
-===================
-                            Benchmark                                    Mode  Cnt   Score    Error  Units
-                            BenchmarkConfig.benchSumPrimitiveStream     thrpt    5  31,794 ±  3,902  ops/s
-                            BenchmarkConfig.bench_sumAtomicLong         thrpt    5   1,859 ±  0,130  ops/s
-                            BenchmarkConfig.bench_sumBigInteger         thrpt    5   0,371 ±  0,064  ops/s
-                            BenchmarkConfig.bench_sumBoxedCycle         thrpt    5   1,286 ±  0,262  ops/s
-                            BenchmarkConfig.bench_sumBoxedStream        thrpt    5   0,896 ±  0,162  ops/s
-                            BenchmarkConfig.bench_sumPrimitiveFlatMap   thrpt    5   0,712 ±  0,137  ops/s
-                            BenchmarkConfig.bench_sumPrimitiveMapMulti  thrpt    5  26,853 ± 22,471  ops/s
-                            BenchmarkConfig.bench_sumPrimitiveStream    thrpt    5  31,992 ±  5,263  ops/s
-
-                            Process finished with exit code 0
-
-=====
-Benchmark                                       (fileName)   Mode  Cnt      Score      Error  Units
-BenchmarkConfig.benchBufferedReader        sample-tiny.txt  thrpt    5  15193,036 ± 4679,487  ops/s
-BenchmarkConfig.benchFileLines             sample-tiny.txt  thrpt    5  17354,081 ± 3518,159  ops/s
-BenchmarkConfig.benchReadAllLines          sample-tiny.txt  thrpt    5  15291,632 ± 2512,993  ops/s
-BenchmarkConfig.benchWithoutProperClose    sample-tiny.txt  thrpt    5  10531,228 ± 1442,683  ops/s
-
-BenchmarkConfig.benchBufferedReader      sample-medium.txt  thrpt    5  12102,268 ± 1708,870  ops/s
-BenchmarkConfig.benchFileLines           sample-medium.txt  thrpt    5  12927,123 ± 3291,648  ops/s
-BenchmarkConfig.benchReadAllLines        sample-medium.txt  thrpt    5  11480,165 ± 1331,341  ops/s
-BenchmarkConfig.benchWithoutProperClose  sample-medium.txt  thrpt    5  11009,579 ± 1396,239  ops/s
-
-BenchmarkConfig.benchBufferedReader       sample-large.txt  thrpt    5    311,309 ±   49,055  ops/s
-BenchmarkConfig.benchFileLines            sample-large.txt  thrpt    5    292,267 ±   44,443  ops/s
-BenchmarkConfig.benchReadAllLines         sample-large.txt  thrpt    5    278,536 ±   16,527  ops/s
-BenchmarkConfig.benchWithoutProperClose   sample-large.txt  thrpt    5    296,942 ±   17,888  ops/s
-=====
-
-Files.lines not closed
-    https://github.com/vitaliikrik/LabsSlovakia/blob/91de29f96dff7d04f3e5227e85dfd2ec02721d59/src/kry/edu/module4/FilesManagementTask.java
-    https://github.com/eliftehcproedu/Lambda/blob/31fc488a64af5055a96244b607df23b0ae1a3946/_1_Lambda/Stream_Ornekler/Steram06Files.java
-    https://github.com/pszczola4mk/algo/blob/989707a9cfa3ac5a9dd48b7755de73e1dc3280b4/src/main/test/pg/cui/spoj/MorganStringTests.java
-    https://github.com/cihanypc/lambda/blob/fbf11deffe2b22d04ad89e3647f67b4899eeb617/src/Lambda_06.java
-    https://github.com/Refik48/Lambda/blob/a7f89f73540da748f892107c723ab01880fd6541/src/streamOrnekler/Stream06Files.java
-    https://github.com/dbs-leipzig/gradoop/blob/23f8d5cb5f6ad5cbb6d1aa1cf329c959d6cc1782/gradoop-flink/src/main/java/org/gradoop/flink/model/impl/operators/matching/common/statistics/GraphStatisticsLocalFSReader.java
-    https://github.com/rdnc12/javaNotes/blob/a3c26b2ef23f884253fd07c0863203919d1608c5/day44lambda/L03.java
-    https://github.com/devsNsir/yaml-parser/blob/ae2161830b780eeaad4dcf2945d1467028fb8457/src/main/java/parser/yaml_parser/App.java
-    https://github.com/zihjiang/filling/blob/77c0328d21cd89a2a46fc39d5ad28a27752ac93b/filling-core/src/test/java/com/filling/calculation/plugin/base/flink/source/stream/KafkaTableStreamTest.java
-    https://github.com/AliciaGarciaGarcia/AdventOfCode2021/blob/fcf49ab72c9d9bf3788acee0a94ed8db6efc7aff/src/main/java/com/liferay/adventofcode2021/Day1.java
-    https://github.com/PathwayAndDataAnalysis/misc/blob/ef5ad31756629a732cf244bb706f419d4466eee7/src/main/java/org/panda/misc/analyses/SMMARTPatient204.java
-    https://github.com/Emine45/techpredsummer2020/blob/62ab4e1081e5c0481505b7c2e6888ce10189cba4/src/day32lambdant/L04.java
-                    https://github.com/imoyu/JavaBasic/blob/d873c5cc69bbafe89e43a59de0ad6b0fbbc055d6/SomeTest/src/main/java/day20200921/XTest.java
-                    https://github.com/nkorganci/winterjava/blob/8061d5667a830af23f4fd8819753325fc75324a6/src/day01vairables/day36lambda/L08_LambdaWithFiles.java
-                    https://github.com/amartinsierra/java_estandar/blob/f2fdafd32273a49abe9b6f6af0ed28f5eed4341b/22_programa_notas_fichero_nio_collect/src/service/NotasService.java
-                    Files.lines closed
-                    https://github.com/Maikody/michal-borla-kodilla-java/blob/8e189944d08ecc92114aacc92fc17fcc79535fc5/kodilla-exception/src/main/java/com/kodilla/exception/io/FileReader.java
-
-
-    ==============
-
--1 Накладные расходы или насколько стримы медленные
-
-
-
-5. Параллельные вычисления, ordering /sorting
-https://developer.ibm.com/articles/j-java-streams-3-brian-goetz/#eo
-If the stream does have an encounter order, most stream operations must respect that order. For sequential executions, preserving encounter order is essentially free, because elements are naturally processed in the order in which they're encountered. Even in parallel, for many operations (stateless intermediate operations and certain terminal operations such as reduce()), respecting the encounter order doesn't impose any real costs. But for others (stateful intermediate operations, and terminal operations whose semantics are tied to encounter order, such as findFirst() or forEachOrdered()), the obligation to respect the encounter order in a parallel execution can be significant. If the stream has a defined encounter order, but that order isn't significant to the result, it might be possible to speed up parallel execution of pipelines containing order-sensitive operations by removing the ORDERED flag with the unordered() operation.
-
-14 zip
-https://dzone.com/articles/bridge-the-gap-of-zip-operation
-
-15. method rerefence or not??
-
-16 teeing
-
-20 аргумент конструктора лучше limit
-
-
-====
-To summarize what we’ve learned so far, working with streams, in general, involves three things:
-
-A datasource (such as a collection) on which to perform a query
-A chain of intermediate operations, which form a stream pipeline
-One terminal operation, which executes the stream pipeline and produces a result
-
-
-
-
-
-
-Benchmark                                     (fileName)   Mode  Cnt      Score     Error  Units
-BenchmarkConfig.benchBufferedReader      sample-tiny.txt  thrpt   25  14053,105 ± 327,748  ops/s
-BenchmarkConfig.benchFileLines           sample-tiny.txt  thrpt   25  17067,844 ± 269,158  ops/s
-BenchmarkConfig.benchReadAllLines        sample-tiny.txt  thrpt   25  15002,664 ± 240,188  ops/s
-BenchmarkConfig.benchWithoutProperClose  sample-tiny.txt  thrpt   25   8510,614 ± 425,730  ops/s
-
-
-Benchmark                                  (fileName)  (minWordLength)   Mode  Cnt    Score    Error  Units
-BenchmarkConfig.imperative      voyna-i-mir-tom-1.txt                3  thrpt    9   11,762 ±  0,924  ops/s
-BenchmarkConfig.readFileFully   voyna-i-mir-tom-1.txt                3  thrpt    9  160,022 ± 21,510  ops/s
-BenchmarkConfig.streamFlatMap   voyna-i-mir-tom-1.txt                3  thrpt    9   10,966 ±  1,056  ops/s
-BenchmarkConfig.streamMapMulti  voyna-i-mir-tom-1.txt                3  thrpt    9   10,941 ±  1,703  ops/s
-
-Benchmark                                  (fileName)  (minWordLength)   Mode  Cnt    Score    Error  Units
-BenchmarkConfig.imperative      voyna-i-mir-tom-1.txt                3  thrpt    9   13,847 ±  1,753  ops/s
-BenchmarkConfig.readFileFully   voyna-i-mir-tom-1.txt                3  thrpt    9  188,147 ± 33,165  ops/s
-BenchmarkConfig.streamFlatMap   voyna-i-mir-tom-1.txt                3  thrpt    9   12,424 ±  2,093  ops/s
-BenchmarkConfig.streamMapMulti  voyna-i-mir-tom-1.txt                3  thrpt    9   13,087 ±  1,238  ops/s
-BenchmarkConfig.sum3FlatMap                       N/A              N/A  thrpt    9    2,034 ±  0,303  ops/s
-BenchmarkConfig.sum3MapMulti                      N/A              N/A  thrpt    9    4,544 ±  0,511  ops/s
-BenchmarkConfig.sum3MapMulti2                     N/A              N/A  thrpt    9    4,579 ±  0,830  ops/s
