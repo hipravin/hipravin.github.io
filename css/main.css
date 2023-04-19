@@ -84,3 +84,11 @@
 .ul-nob {
     list-style-type: none;
 }
+
+ol figure {
+    margin: 1rem 0 1rem;
+}
+
+ul figure {
+    margin: 1rem 0 1rem;
+}
