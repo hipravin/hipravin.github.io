@@ -1,0 +1,95 @@
+---
+layout: post
+title: SQL Injection java PostgreSQL TODO
+excerpt: SQL Injection java PostgreSQL TODO
+metadescription: TODO
+---
+<p><a href="https://github.com/hipravin/samples-sql-injection">Код примеров на Github</a>.</p>
+<h4>
+    Вступление
+</h4>
+<p>
+    В данной статье речь пойдёт о таком типе уязвимости приложений как внедрение SQL кода (SQL injection / SQL-инъекция).
+    Информации по данной теме в сети очень много, как в общем, так и с учётом специфики Java разработки:
+</p>
+    <ul>
+        <li><a href="https://bi.zone/expertise/insights/chem-opasny-sql-inektsii-i-kak-ot-nikh-zashchititsya/">Чем опасны SQL-инъекции и как от них защититься</a></li>
+        <li><a href="https://sec.okta.com/articles/2020/12/sql-injection-java-practices-avoid">SQL Injection in Java: Practices to Avoid</a></li>
+        <li><a href="https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/05-Testing_for_SQL_Injection">
+            Testing for SQL Injection</a></li>
+    </ul>
+<p>
+    Суть уязвимости в том, что злоумышленник вместо простого текста, в котором система ожидает его имя, адрес, поисковый запрос и так далее,
+    вводит специальные символы и обрывки SQL кода. Этот текст служит параметром какого-то SQL запроса в приложении.
+    Если приложение уязвимо, то исходный SQL запрос удаётся подменить.
+    Это может позволить получить информацию, к которой пользователь не имеет доступа, изменить данные ради своей выгоды,
+    а также полностью уничтожить данные.
+</p>
+<p>
+    Кроме чудовищной опасности данной уязвимости, удивительна и лёгкость, с которой ей можно воспользоваться:
+    не требуется специальных инструментов и сложных навыков, не нужен физический доступ к серверу или поддельный сайт.
+</p>
+<p>
+    С другой стороны, в мире Java разработки существует несколько простых правил, позволяющих практически полностью исключить
+    возможности внедрения SQL:
+</p>
+<ol><li>
+        Не использовать конкатенацию строк в запросах к базам данных.
+    </li>
+    <li>
+        Использовать PreparedStatement/CallableStatement вместо Statement.
+        Библиотеки spring-jdbc, Hibernate, MyBatis, JOOQ и прочие также внутри используют PreparedStatement.
+    </li>
+    <li>
+        Передавать параметры запросов с помощью методов setParameter, а не в самом запросе. (Автоматически следует из первых двух правил.)
+    </li>
+</ol>
+<p>
+    Первое правило может быть ослаблено, чтобы запрет конкатенации касался только параметров запроса, но
+    ради выразительности и читаемости кода я предпочитаю его в таком виде.
+</p>
+<p>
+    Существуют и другие причины всегда писать программы следуя этим требованиям.
+    Как минимум, производительность. Да и код, написанный таким образом, короче и понятней.
+    Поэтому кажется, что большинство разработчиков уже следует этим правилам и риск подверженности SQL-инъекциям в Java приложениях преувеличен.
+    К сожалению, контрпримеры существуют, и поэтому сохраняется необходимость в повышенном внимании к данной проблеме.
+    Например, на первой же странице поиска по Github c запросом "createStatement( ' language:java" мне удалось найти код в серьёзном проекте, потенциально подверженный внедрению SQL:
+
+    <a href="https://github.com/stanfordnlp/CoreNLP/blob/3499d27e615c35702f23948e886a7389b5695c33/src/edu/stanford/nlp/util/GoogleNGramsSQLBacked.java#L101">github.com/stanfordnlp/CoreNLP... </a>
+    {% highlight java %}
+    if(str.contains("'")){
+       str = StringUtils.escapeString(str, new char[]{'\''},'\'');
+    }
+    ...
+    String phrase = escapeString(str);
+    query = "select count from " + table + " where phrase='" + phrase+"';";{% endhighlight %}
+    Автор предпринял усилия для защиты кода, но выбранный метод не является надежным.
+    Подробнее позже, иначе вступление будет слишком громоздким.
+</p>
+<p>
+    Я хочу провести несколько экспериментов, чтобы выяснить, насколько просто получится воспроизвести уязвимость и устранить её,
+    насколько критичен возможный ущерб на практике, а также как обнаружить незащищенный код. Подопытной базой данных будет PostgreSQL,
+    а в качестве клиента - Spring Jdbc (JdbcTemplate) и JPA (Hibernate).
+</p>
+
+
+
+
+
+
+
+
+
+<h3>Заключение</h3>
+<p>
+
+</p>
+
+<p><a href="https://github.com/hipravin/samples-sql-injection">Код примеров на Github</a>.</p>
+
+
+<h4>
+    TODO: как сло
+
+    https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+</h4>
