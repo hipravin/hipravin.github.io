@@ -198,7 +198,7 @@ metadescription: TODO
     Можно ли реализовать тот же приём, но с использованием проверенной надёжной библиотеки, учитывающей все служебные символы и отличия разных СУБД?
     Судя по всему, нет. Существует библиотека OWASP Esapi, которая, кроме прочего, призвана решить эту задачу и даже иногда применяется на практике:
 </p>
-    {% highlight plaintext %}
+    {% highlight java %}
     static String escapeSpecialCharacters(String value) {
         //available codecs: MySQL, DB2, Oracle. But there is no PostgreSQL codec!
         return ESAPI.encoder().encodeForSQL(new OracleCodec(), value);
@@ -219,6 +219,84 @@ metadescription: TODO
 <h4>
     Параметризованные запросы
 </h4>
+<p>
+    Параметризованные запросы - концепция, которая противопоставляется динамически генерируемым запросам.
+    Для вторых каждый раз, когда нужно выполнить поиск, система выполняет все шаги: формирование запроса конкатенацией,
+    доставка запроса до базы данных средствами JDBC драйвера. На стороне БД: синтаксический разбор запроса, применение правил (rewrite system),
+    оптимизация и выбор плана выполнения, выполнение.
+</p>
+<p>
+    Для параметризованных запросов на всех уровнях реализовано разделение статического запроса и его динамических параметров:
+</p>
+<ol>
+    <li>В Java коде: connection.prepareStatement(..) отделено от pstmt.setParameter(...) </li>
+    <li>Драйвер базы данных передает параметры отдельно от запроса</li>
+    <li>База данных выделяет параметры из запроса и кэширует план выполнения без учета параметров</li>
+</ol>
+<p>
+    Используя такой подход, мы как разработчики, полагаемся на корректность реализации классов и библиотек Java, JDBC драйвера и самой СУБД.
+    В контексте SQL-инъекций для работы такого понимания достаточно, но, безусловно, за внешней простотой скрывается большое количество тонкостей и нюансов.
+    Например, в PostgreSQL существуют серверные параметризованные запросы, требующие пары запросов PREPARE - EXECUTE.
+    Драйвер выбирает, сколько запросов кэшировать и в какой момент переходить с клиентского на серверный варианты.
+    По умолчанию, четыре запроса будут клиентскими, а последующие - серверными. Изменть данное поведение можно вызовом метода pgStatement.setPrepareThreshold(...);
+    Подробнее можно почитать здесь <a href="https://dev.to/yugabyte/postgres-query-execution-jdbc-prepared-statements-51e2">
+    https://dev.to/yugabyte/postgres-query-execution-jdbc-prepared-statements-51e2</a>
+</p>
+
+<p>
+    Далее приведу несколько реализаций с использованием параметризованных запросов. Все они корректны и не подвержены внедрению SQL.
+    Работу непосредственно с Connection и PreparedStatement без использования вспомогательных библиотек я пропускаю - такой код слишком многословен,
+    требует большого внимания к корректному управлению ресурсами (ResultSet, Statement и Connection), поэтому подвержен ошибкам.
+</p>
+    {% highlight java %}
+    public List<BookEntity> findByTitle(String title) {
+        String query = "select * from book where title = ?";
+        return jdbcTemplate.query(query, ps -> ps.setString(1, title),
+        BOOK_ROW_MAPPER);
+    }  {% endhighlight %}
+
+    {% highlight java %}
+    @Entity
+    @Table(name = "BOOK")
+    @NamedQueries({
+         @NamedQuery(name = "BookEntity.findById",
+            query="select b from BookEntity b where b.title = :title")
+    })
+    public class BookEntity {
+    ...
+    @Override
+    public List<BookEntity> findByTitle(String title) {
+        var query = em.createNamedQuery("BookEntity.findById", BookEntity.class);
+        query.setParameter("title", title);
+        return query.getResultList();
+    } {% endhighlight %}
+    {% highlight java %}
+    public interface SpringDataBookRepository extends JpaRepository<BookEntity, Long> {
+        List<BookEntity> findByTitle(String title);
+
+        @Query("select b from BookEntity b where b.title = :title")
+        List<BookEntity> findByTitleExplicitJpql(String title);
+    }{% endhighlight %}
+
+
+<p>
+    Перечисленные отрывки кода используют: JdbcTemplate, JPA EntityManager + NamedQuery, String Data (именованные методы, явный JPQL запрос).
+    Синтаксис отличается, но во всех случаях присутствует общая семантика: параметр title отделён от запроса.
+    Существует ещё множество способов доступа к данным в Java, можно использовать любой наиболее подходящий конкретному приложению.
+    Снова возникает резонный вопрос - почему столько внимания уделяется SQL-инъекциям,
+    если лучшее решение - просто применение современных подходов к работе с данными?
+</p>
+
+<h4>А есть ли проблема?</h4>
+<p>
+    Согласно  <a href="https://www.statista.com/statistics/806081/worldwide-application-vulnerability-taxonomy/#:~:text=SQL%20Injection%20is%20the%20main,site%20scripting%20(stored)%20attacks.">сайту www.statista.com</a>,
+    23% всех критических уязвимостей в 2023 года относится к SQL-инъекциям, удерживающим лидерство в таблице.
+    По другому отчёту 29% всех приложений всё ещё уязвимы к подобным атакам (Imperva Web Application Attack Report, WAAR, February 2020).
+    Причин может быть много: легаси код, устаревшие образцы кода в сети, экономия.
+    Возможно, что среди приложений на Java статистика выглядит лучше среднего, а на PHP - хуже.
+</p>
+
+                            <!--TODO : remove-->        </BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity>
 
 <h3>Заключение</h3>
 <p>
