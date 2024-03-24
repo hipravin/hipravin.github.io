@@ -13,6 +13,8 @@ metadescription: TODO
     Информации по данной теме в сети очень много, как в общем, так и с учётом специфики Java разработки:
 </p>
     <ul>
+        <li><a href="https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html">
+            SQL Injection Prevention Cheat Sheet</a></li>
         <li><a href="https://bi.zone/expertise/insights/chem-opasny-sql-inektsii-i-kak-ot-nikh-zashchititsya/">Чем опасны SQL-инъекции и как от них защититься</a></li>
         <li><a href="https://sec.okta.com/articles/2020/12/sql-injection-java-practices-avoid">SQL Injection in Java: Practices to Avoid</a></li>
         <li><a href="https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/05-Testing_for_SQL_Injection">
@@ -67,8 +69,8 @@ metadescription: TODO
     Подробнее позже, иначе вступление будет слишком громоздким.
 </p>
 <p>
-    Я хочу провести несколько экспериментов, чтобы выяснить, насколько просто получится воспроизвести уязвимость и устранить её,
-    насколько критичен возможный ущерб на практике, а также как обнаружить незащищенный код. Подопытной базой данных будет PostgreSQL,
+    Я хочу провести несколько экспериментов, чтобы выяснить на практике, насколько просто получится воспроизвести уязвимость и устранить её,
+    насколько критичен возможный ущерб, а также как обнаружить незащищенный код. Подопытной базой данных будет PostgreSQL,
     а в качестве клиента - Spring Jdbc (JdbcTemplate) и JPA (Hibernate).
 </p>
 
@@ -118,7 +120,7 @@ metadescription: TODO
     несмотря на исключение ниже, таблица очищалась. Исключение выбрасывается уже после успешного выполнения скрипта потому
     что JdbcTemplate ожидает только один результат, а на самом деле их несколько, ведь мы превратили один запрос в три.
 </p>
-    {% highlight java %}
+    {% highlight plaintext %}
     org.springframework.dao.DataIntegrityViolationException:
         StatementCallback; SQL [select * from book where title = '';truncate book; select '1'];
         Multiple ResultSets were returned by the query.
@@ -248,28 +250,30 @@ metadescription: TODO
     Работу непосредственно с Connection и PreparedStatement без использования вспомогательных библиотек я пропускаю - такой код слишком многословен,
     требует большого внимания к корректному управлению ресурсами (ResultSet, Statement и Connection), поэтому подвержен ошибкам.
 </p>
+<p><strong>Spring JdbcTemplate</strong></p>
     {% highlight java %}
     public List<BookEntity> findByTitle(String title) {
         String query = "select * from book where title = ?";
         return jdbcTemplate.query(query, ps -> ps.setString(1, title),
-        BOOK_ROW_MAPPER);
+            BOOK_ROW_MAPPER);
     }  {% endhighlight %}
-
+<p><strong>JPA EntityManager, Named Query</strong></p>
     {% highlight java %}
     @Entity
     @Table(name = "BOOK")
     @NamedQueries({
-         @NamedQuery(name = "BookEntity.findById",
+         @NamedQuery(name = "BookEntity.findByTitle",
             query="select b from BookEntity b where b.title = :title")
     })
     public class BookEntity {
     ...
     @Override
     public List<BookEntity> findByTitle(String title) {
-        var query = em.createNamedQuery("BookEntity.findById", BookEntity.class);
+        var query = em.createNamedQuery("BookEntity.findByTitle", BookEntity.class);
         query.setParameter("title", title);
         return query.getResultList();
     } {% endhighlight %}
+<p><strong>Spring Data query methods, @Query</strong></p>
     {% highlight java %}
     public interface SpringDataBookRepository extends JpaRepository<BookEntity, Long> {
         List<BookEntity> findByTitle(String title);
@@ -278,9 +282,7 @@ metadescription: TODO
         List<BookEntity> findByTitleExplicitJpql(String title);
     }{% endhighlight %}
 
-
 <p>
-    Перечисленные отрывки кода используют: JdbcTemplate, JPA EntityManager + NamedQuery, String Data (именованные методы, явный JPQL запрос).
     Синтаксис отличается, но во всех случаях присутствует общая семантика: параметр title отделён от запроса.
     Существует ещё множество способов доступа к данным в Java, можно использовать любой наиболее подходящий конкретному приложению.
     Снова возникает резонный вопрос - почему столько внимания уделяется SQL-инъекциям,
@@ -289,14 +291,129 @@ metadescription: TODO
 
 <h4>А есть ли проблема?</h4>
 <p>
-    Согласно  <a href="https://www.statista.com/statistics/806081/worldwide-application-vulnerability-taxonomy/#:~:text=SQL%20Injection%20is%20the%20main,site%20scripting%20(stored)%20attacks.">сайту www.statista.com</a>,
+    Согласно  <a href="https://www.statista.com/statistics/806081/worldwide-application-vulnerability-taxonomy/#:~:text=SQL%20Injection%20is%20the%20main,site%20scripting%20(stored)%20attacks.">
+    сайту www.statista.com</a>,
     23% всех критических уязвимостей в 2023 года относится к SQL-инъекциям, удерживающим лидерство в таблице.
     По другому отчёту 29% всех приложений всё ещё уязвимы к подобным атакам (Imperva Web Application Attack Report, WAAR, February 2020).
-    Причин может быть много: легаси код, устаревшие образцы кода в сети, экономия.
+    Причин может быть много: унаследованный код, устаревшие примеры кода в сети, экономия.
     Возможно, что среди приложений на Java статистика выглядит лучше среднего, а на PHP - хуже.
+    Но уже понятно, что в рамках мировой IT инфраструктуры проблема внедрения SQL сохраняется.
+    Теперь следующий важный вопрос - а есть ли проблема у конкретного программиста?
+    Как убедиться, что код, который добавляется в систему безопасен? Как убедиться, что нет старого кода, который уязвим?
+    Как доказать начальству или внешнему аудиту, что приложение не подвержено данному типу атак?
 </p>
 
+<p>
+    В случае с новым кодом помогает процесс рецензирования (code review).
+    Старый код тоже следует изучить и по возможности привести в соответствие со стандартами, принятыми в компании.
+    Если старый код содержит большое количество потенциальных кандидатов для SQL-инъекций, и этом он плохо покрыт регрессионным тестированием,
+    то можно применить экранирование, чтобы снизить риски атак до полноценного рефакторинга.
+    Эти шаги разработчик может предпринять самостоятельно на любом проекте в рамках имеющегося опыта.
+    Для полноценного аудита и уверенности в защищенности приложения применяются специальные инструменты, сканирующие код на предмет уязвимостей.
+    Часть из них направлена на поиск уязвимостей методом черного ящика. Такие инструменты производят стандартные атаки на работающем приложении и
+    собирают отчет из всех удачных попыток. Другая часть сканирует исходные файлы приложения, не требуя его запуска.
+    Наверное, самый известный такой инструмент для Java - это SonarQube.
+</p>
+
+<h4>Поиск уязвимостей с помощью SonarQube</h4>
+<p>
+    К сожалению, публичная версия SonarQube не обнаруживает SQL-инъекции.
+    Другой мощный инструмент - VeraCode - вообще не имеет публичной версии.
+    Возможно, удастся заполнить данный раздел позже.
+    Хотелось бы проверить, сколько уязвимостей будет обнаружено в тестовом проекте, а также
+    посчитает ли SonarQube экранирование достаточной защитой.
+</p>
+
+
                             <!--TODO : remove-->        </BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity>
+<h4>LIKE injection</h4>
+<p>
+    Используя параметризованные запросы, об SQL-инъекциях можно забыть. Такое заявление я встретил в одной из статей в сети.
+    Давайте порассуждаем, насколько справедливо такое утверждение.
+    Действительно, такой подход надежно защищает от классического "полноценного" внедрения SQL с подменой условия, прерыванием запроса,
+    превращением его в синтаксически некорректный.
+    С другой стороны, иногда сам параметр может содержать в себе служебные символы, которые в зависимости от логики работы приложения,
+    разрешено или запрещено вводить пользователю.
+    Например, запросы с оператором LIKE могут содержать символы подстановки (wildcard) '%' или '_'. Предположим, что в программе есть функционал поиска книги по первым символам названия, то есть
+    по префиксу поля title.
+    С точки зрения SQL это означает выполнение следующего запроса:
+</p>
+{% highlight sql %}
+    select * from book where title like 'Some Title%';    {% endhighlight %}
+<p>
+    'Some Title' - значение, которое вводит пользователь, а '%' в конце программа добавляет самостоятельно.
+    Пользователь может сам использовать символы подстановки, например, так: '%Java'. Тогда в результате вместо поиска
+    по префиксу будет произведён поиск по подстроке. В отдельных случаях это может быть разрешено намеренно в качестве функциональности расширенного поиска.
+    Но в большинстве случаев это ошибка и потенциальная уязвимость. Кроме неверных результатов поиска может пострадать производительность запросов:
+    самый распространённый тип индекса btree работает при поиске по началу строки, но никак не помогает при поиске по подстроке.
+    Существуют другие типы индексов, которые помогут, если нужен именно поиск по подстроке, подробнее можно почитать здесь
+    <a href="https://www.cybertec-postgresql.com/en/postgresql-more-performance-for-like-and-ilike-statements/">https://www.cybertec-postgresql.com/en/postgresql-more-performance-for-like-and-ilike-statements/</a>.
+    Но будем исходить из того, что разрешён лишь поиск по префиксу и служебные символы нужно запретить или экранировать.
+    Экранирование означает добавление обратной косой черты перед символами подстановки: '\%' и '\_':
+</p>
+{% highlight plaintext %}
+    select * from book where title like 'What if \% or \_ is present in the title?' escape '\';
+    select * from book where title like 'What if |% or |_ is present in the title?' escape '|'; {% endhighlight %}
+
+<p>
+    Конструкция "escape '\'" позволяет выбрать символ экранирования, что необязательно для PostgreSQL если '\' нам подходит.
+    Однако стандарт SQL не предусматривает никакого символа экранирования по умолчанию, поэтому так код становиться более универсальным.
+    В частности, такие запросы можно выполнять одновременно на тестовой HSQLDB и эксплуатационной PostgreSQL.
+</p>
+
+<p>
+    Предлагаю для всех использованных ранее способов доступа к базе данных реализовать поиск по началу названия книги.
+    Для экранирования будет использована функция escape из модуля spring-data.
+</p>
+<p><strong>Spring JdbcTemplate</strong></p>
+    {% highlight java %}
+    @Override
+    public List<BookEntity> findByTitleStartingWithOrderByTitle(String prefix) {
+        String query = "select * from book where title like ? escape '\\' order by title";
+            return jdbcTemplate.query(query,
+            ps -> ps.setString(1, EscapeCharacter.DEFAULT.escape(prefix) + "%"),
+            BOOK_ROW_MAPPER);
+    }  {% endhighlight %}
+    <p><strong>JPA EntityManager, Named Query</strong></p>
+    {% highlight java %}
+    ...
+    @NamedQuery(name = "BookEntity.findByTitlePrefix",
+        query="select b from BookEntity b where b.title like :titlePrefix escape '\\' order by b.title")
+    ...
+    @Override
+    public List<BookEntity> findByTitleStartingWithOrderByTitle(String prefix) {
+        var query = em.createNamedQuery("BookEntity.findByTitlePrefix", BookEntity.class);
+        query.setParameter("titlePrefix", EscapeCharacter.DEFAULT.escape(prefix) + "%");
+        return query.getResultList();
+    } {% endhighlight %}
+    <p><strong>Spring Data query methods, @Query</strong></p>
+    {% highlight java %}
+    List<BookEntity> findByTitleStartingWithOrderByTitle(String title); //implicitly escapes % and _
+
+    @Query("select b from BookEntity b where b.title like ?#{escape([0])}% escape ?#{escapeCharacter()} order by b.title")
+    List<BookEntity> findByTitleStartingJpql(String prefix); {% endhighlight %}
+<p>
+    В примерах с использованием JdbcTemplate и EntityManager-NamedQuery добавлен явный вызов функции escape.
+    Spring Data @Query требует довольно громоздкого выражения, которое к тому же не валидируется текущей версии IDE, но всё же работает корректно.
+    Интереснее всего тот факт, что Spring Data Query Methods производит экранирование неявно.
+    Такое поведение справедливо для методов 'StartingWith', 'EndingWith', 'Containing', 'NotContaining', причём судя по исходному коду текущей версии не похоже,
+    чтобы его можно было отключить в конфигурации (см. класс org.springframework.data.jpa.repository.query.ParameterMetadataProvider).
+</p>
+
+<h4>Regular expression injection</h4>
+<p>
+    Если речь зашла о внедрении SQL в LIKE запросы, то следует отметить, что такая же проблема будет актуальна для запросов типа title ~ 'expr' и 'title SIMILAR TO expr'.
+</p>
+    {% highlight sql %}
+    select * from book where title ~ '^S{1,3}.+\d+$'; {% endhighlight %}
+<p>
+    Регулярное выражение обычно выполняется быстро, но может быть сформулировано так, чтобы потреблять произвольный объём памяти и времени исполнения.
+    Правильное экранирование всех служебных символов в регулярном выражении также выглядит слишком сложной и потому сомнительной задачей.
+    Думаю разумно в данном случае избегать сценариев, в которых введённый пользователем текст напрямую используется в запросе.
+    Можно разрешить вводить строго типизированные данные или вообще выбирать только из списка разрешённых значений.
+    Общие рекомендации по разработке защищенных приложений включают внимательное отношение к любым данным, приходящим от пользователя.
+    Уязвимость log4shell показала, что опасность может представлять даже такая невинная операция как логирование.
+</p>
 
 <h3>Заключение</h3>
 <p>
@@ -309,8 +426,12 @@ metadescription: TODO
 <h4>
     TODO: как сло
 
-    https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+
     https://stackoverflow.com/questions/59855519/cannot-mitigate-sql-injections-using-owasp-esapi-veracode
 
     Detection of Injection Flaws in Java, C#, PHP, Python, JavaScript, TypeScript starts in SonarQube’s Developer Edition.
+
+    https://discourse.hibernate.org/t/it-is-necessary-to-write-redundant-escape-after-every-like-expression/9079
+    It is not the default escape character. By default, there is no escape character according to the SQL spec. Only a few databases choose to use \ as default escape character and Hibernate ORM tries to standardize a few things like that for the sake of portability.
+    It’s always best to make this explicit in your queries to avoid surprises.
 </h4>
