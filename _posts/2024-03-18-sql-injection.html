@@ -308,7 +308,6 @@ metadescription: TODO
     Старый код тоже следует изучить и по возможности привести в соответствие со стандартами, принятыми в компании.
     Если старый код содержит большое количество потенциальных кандидатов для SQL-инъекций, и этом он плохо покрыт регрессионным тестированием,
     то можно применить экранирование, чтобы снизить риски атак до полноценного рефакторинга.
-    Эти шаги разработчик может предпринять самостоятельно на любом проекте в рамках имеющегося опыта.
     Для полноценного аудита и уверенности в защищенности приложения применяются специальные инструменты, сканирующие код на предмет уязвимостей.
     Часть из них направлена на поиск уязвимостей методом черного ящика. Такие инструменты производят стандартные атаки на работающем приложении и
     собирают отчет из всех удачных попыток. Другая часть сканирует исходные файлы приложения, не требуя его запуска.
@@ -414,7 +413,6 @@ metadescription: TODO
     Уязвимость log4shell показала, что опасность может представлять даже такая невинная операция как логирование.
 </p>
 
-<!--TODO : remove-->        </BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity>
 <h4>
     Динамические запросы
 </h4>
@@ -508,21 +506,12 @@ metadescription: TODO
 
 <h4>Заключение</h4>
 <p>
-
+    В данной статье мы рассмотрели одну из самых опасных и часто встречающихся уязвимостей при разработке приложений,
+    работающих с базой данных и получающих какую-то информацию от пользователя.
+    Выяснили, что правильный способ защиты - использование параметризованных запросов.
+    Было показано, как реализовать такой способ с применением различных библиотек.
+    Но это не является "серебрянной пулей" и к данным, полученным от пользователя, всегда стоит относиться с пристрастием.
+    Дополнительной мерой защиты может служить экранирование служебных символов.
 </p>
 
 <p><a href="https://github.com/hipravin/samples-sql-injection">Код примеров на Github</a>.</p>
-
-
-<h4>
-    TODO: как сло
-
-
-    https://stackoverflow.com/questions/59855519/cannot-mitigate-sql-injections-using-owasp-esapi-veracode
-
-    Detection of Injection Flaws in Java, C#, PHP, Python, JavaScript, TypeScript starts in SonarQube’s Developer Edition.
-
-    https://discourse.hibernate.org/t/it-is-necessary-to-write-redundant-escape-after-every-like-expression/9079
-    It is not the default escape character. By default, there is no escape character according to the SQL spec. Only a few databases choose to use \ as default escape character and Hibernate ORM tries to standardize a few things like that for the sake of portability.
-    It’s always best to make this explicit in your queries to avoid surprises.
-</h4>
