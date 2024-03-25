@@ -325,7 +325,6 @@ metadescription: TODO
 </p>
 
 
-                            <!--TODO : remove-->        </BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity>
 <h4>LIKE injection</h4>
 <p>
     Используя параметризованные запросы, об SQL-инъекциях можно забыть. Такое заявление я встретил в одной из статей в сети.
@@ -415,7 +414,99 @@ metadescription: TODO
     Уязвимость log4shell показала, что опасность может представлять даже такая невинная операция как логирование.
 </p>
 
-<h3>Заключение</h3>
+<!--TODO : remove-->        </BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity></BookEntity>
+<h4>
+    Динамические запросы
+</h4>
+<p>
+    Рассмотрим ещё один сценарий, который заслуживает внимания и связан с SQL-инъекциями.
+    Речь пойдёт о запросах, в которых набор условий формируется в процессе выполнения.
+    Например, из нескольких параметров нужно выбрать только те, которые заполнены.
+    Подобные сценарии периодически возникают на практике и удачно, что на stackoverflow существует как раз такой вопрос:
+    <a href="https://stackoverflow.com/questions/59855519/cannot-mitigate-sql-injections-using-owasp-esapi-veracode">https://stackoverflow.com/questions/59855519/cannot-mitigate-sql-injections-using-owasp-esapi-veracode</a>
+    Автор вопроса использует StringBuilder для построения запроса. Статический анализатор кода VeraCode выявил уязвимость такого кода, после чего разработчик попытался использовать
+    библиотеку OWASP Esapi для обработки пользовательского ввода и защиты от SQL-инъекций.
+    Это не помогло, и в качестве рекомендаций все единогласно посоветовали не использовать конкатенацию и воспользоваться параметризованными запросами.
+</p>
+
+<p>
+    Рассмотрим несколько вариантов решения подобной задачи.
+    Применительно к тестовому проекту сформулируем её так: найти книги, названия которых содержат хотя бы одно из указанных значений.
+    Запрос будет выглядеть так:
+</p>
+{% highlight sql %}
+    select * from book where title like '%term1%' or title like '%term2%' or title like '%term3%'; {% endhighlight %}
+<p>
+    Напрашивается прямолинейное решение с конкатенацией строк и методом Stream#collect.joining:
+</p>
+    {% highlight java %}
+    @Override
+    public List<BookEntity> findByTitleLikeOr(String... orLikeTitles) {
+        String likePart = Arrays.stream(orLikeTitles)
+            .map(t -> String.format("title like '%%%s%%' escape '\\'", escape(t)))
+            .collect(Collectors.joining(" or "));
+
+        String query = "select * from book where " + likePart + "order by title";
+        return jdbcTemplate.query(query, BOOK_ROW_MAPPER);
+    } {% endhighlight %}
+<p>
+    Такой код подвержен внедрению SQL, что можно исправить экранированием кавычек вручную или с использованием OWASP Encoder.encodeForSQL(...).
+    Как мы уже знаем, этот способ не рекомендуется и статические анализаторы кода, вероятно, не воспринимают его всерьёз.
+    Можно попробовать выйти из положения малой кровью: оставить конкатенацию, но параметры передавать при помощи PreparedStatement:
+</p>
+    {% highlight java %}
+    @Override
+    public List<BookEntity> findByTitleLikeOr(String... orLikeTitles) {
+        String likePart = Stream.generate(() -> "title like ? escape '\\'")
+            .limit(orLikeTitles.length)
+            .collect(Collectors.joining(" or "));
+        String query = "select * from book where " + likePart + " order by title";
+
+        return jdbcTemplate.query(query, ps -> {
+            for (int i = 0; i < orLikeTitles.length; i++) {
+                String titlePartEscaped = String.format("%%%s%%", EscapeCharacter.DEFAULT.escape(orLikeTitles[i]));
+                ps.setString(i + 1, titlePartEscaped);
+            }
+        }, BOOK_ROW_MAPPER);
+    } {% endhighlight %}
+<p>
+    Просто формируем запрос типа "... like ? or like ? or like ?...", а затем вызываем метод setParameter нужное количество раз.
+    Код работает корректно и защищён от внедрения SQL.
+    Но его не назвать очень лаконичным и понятным, кроме того неизвестно как его воспримут статические анализаторы.
+    ДLаже если сейчас уязвимость не будет обнаружена, в будущем может появиться более строгая проверка.
+    В таком случае можно провести внимательное рецензирование кода и исключить найденную потенциальную уязвимость как ложно положительную.
+    Это очень неудобно, если Вы не сами принимаете решение, а отчитываетесь, например, перед внешним аудитом,
+    потому что нужно идти по списку потенциальных уязвимостей и демонстрировать каждый отрывок кода, объясняя корректность его работы.
+    Как на экзамене. К счастью, есть способ решения задачи, который намного лучше подходит для динамических запросов - JPA Criteria API.
+    Тогда код будет выглядеть, например, следующим образом:
+</p>
+    {% highlight java %}
+    @Override
+    public List<BookEntity> findByTitleLikeOr(String... orLikeTitles) {
+        CriteriaBuilder cb = em.getCriteriaBuilder();
+        CriteriaQuery<BookEntity> cq = cb.createQuery(BookEntity.class);
+        Root<BookEntity> bookRoot = cq.from(BookEntity.class);
+        cq.select(bookRoot);
+
+        var orLikePredicates = Arrays.stream(orLikeTitles)
+            .map(t -> cb.like(bookRoot.get("title"), "%" + escape(t) + "%", '\\'))
+            .toArray(Predicate[]::new);
+
+        cq.where(cb.or(orLikePredicates));
+        cq.orderBy(cb.asc(bookRoot.get("title")));
+        TypedQuery<BookEntity> q = em.createQuery(cq);
+        return q.getResultList();
+    } {% endhighlight %}
+<p>
+    Субъективно минус Ctiteria API в том, что логика выборки данных размазана по нескольким строчкам кода, а не собрана в единый запрос.
+    Поэтому по возможности я предпочитаю использовать SQL или JPQL запросы.
+    Чтобы избежать конкатенации можно создать несколько константных запросов и выбирать подходящий условным оператором if
+    или конструкцией switch в зависимости от комбинации параметров.
+    Но это разумно только если таких констант понадобится две, три, максимум - четыре,
+    и такой подход быстро выйдет из-под контроля при добавлении новых условий и параметров.
+</p>
+
+<h4>Заключение</h4>
 <p>
 
 </p>
